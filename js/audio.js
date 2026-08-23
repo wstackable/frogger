@@ -18,6 +18,12 @@ const SOUNDS = {
   over:   { wave: 'sawtooth', steps: [[400,0.16],[320,0.16],[240,0.16],[150,0.40]], gain: 0.16 },
   pickup: { wave: 'triangle', steps: [[780, 0.06], [1040, 0.10]],                  gain: 0.14 },
 
+  /* --- diving turtles. tuck is the warning, sink is the moment it is gone,
+         and both are quiet on purpose: they play under your feet, every few
+         seconds, for the whole level. --- */
+  tuck:   { wave: 'sine',     steps: [[300, 0.05], [240, 0.07]],                 gain: 0.06 },
+  sink:   { wave: 'sine',     steps: [[240, 0.06], [150, 0.09], [90, 0.12]],     gain: 0.09, crunch: 0.10 },
+
   /* --- the bonus round --- */
   smash:    { wave: 'sawtooth', steps: [[190, 0.05], [95, 0.09]],  gain: 0.20, crunch: 0.22 },
   bigsmash: { wave: 'square',   steps: [[300,0.04],[170,0.05],[90,0.13]], gain: 0.24, crunch: 0.38 },

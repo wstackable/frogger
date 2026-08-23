@@ -234,6 +234,8 @@ const game = {
   ghostTime: 0,        /* banked world time, for the boneyard level */
   pickedLevel: 1,      /* which level the title screen is pointing at */
   lastBonus: null,     /* a little "+200" that floats up */
+  fx: [],              /* short-lived puffs and rings on the crossing levels */
+  riding: null,        /* the log or turtle group under the frog right now */
   notice: null,        /* the R / M / C popup: { text, at } */
 };
 
@@ -500,6 +502,82 @@ function die(reason) {
 
 
 /* ==========================================================================
+   Effects
+   --------------------------------------------------------------------------
+   A tiny particle layer for the crossing levels. The bonus round has its own
+   heavier debris system; this one is for small tells, the sort of thing that
+   tells you what the board is about to do a moment before it does it.
+
+   Two shapes only. A puff is a dot that rises and fades, good for bubbles.
+   A ring is a circle that grows and fades, good for a splash or a surfacing.
+   ========================================================================== */
+
+function spawnPuff(x, y, color, count, opts) {
+  const o = opts || {};
+  for (let i = 0; i < count; i++) {
+    game.fx.push({
+      shape: 'puff',
+      x: x + (Math.random() - 0.5) * (o.spread || GRID * 0.5),
+      y: y + (Math.random() - 0.5) * 6,
+      vy: -(o.rise || 26) * (0.6 + Math.random() * 0.8),
+      vx: (Math.random() - 0.5) * 14,
+      life: o.life || 0.5 + Math.random() * 0.3,
+      age: 0,
+      size: o.size || 2 + Math.random() * 2.5,
+      color: color,
+    });
+  }
+}
+
+function spawnRing(x, y, color, opts) {
+  const o = opts || {};
+  game.fx.push({
+    shape: 'ring',
+    x, y,
+    from: o.from || 3,
+    to: o.to || GRID * 0.62,
+    life: o.life || 0.45,
+    age: 0,
+    width: o.width || 2,
+    color: color,
+  });
+}
+
+function updateFx(dt) {
+  for (let i = game.fx.length - 1; i >= 0; i--) {
+    const f = game.fx[i];
+    f.age += dt;
+    if (f.age >= f.life) { game.fx.splice(i, 1); continue; }
+    if (f.shape === 'puff') {
+      f.x += f.vx * dt;
+      f.y += f.vy * dt;
+      f.vy *= 0.96;
+    }
+  }
+}
+
+function drawFx() {
+  for (const f of game.fx) {
+    const t = f.age / f.life;
+    ctx.globalAlpha = 1 - t * t;
+
+    if (f.shape === 'ring') {
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = f.width;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.from + (f.to - f.from) * t, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = f.color;
+      const s = f.size * (1 - t * 0.4);
+      ctx.fillRect(f.x - s / 2, f.y - s / 2, s, s);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+
+/* ==========================================================================
    Diving turtles
    --------------------------------------------------------------------------
    Three phases, on a loop:
@@ -535,6 +613,72 @@ function diveState(lane, ob) {
   return { sink: TUCK_SINK + p * (1 - TUCK_SINK), submerged: true };
 }
 
+/* The same cycle as diveState, but as a name, so we can spot the frame it
+   changes on. */
+function divePhaseName(lane, ob) {
+  if (!ob.dives || !rule('divingTurtles')) return 'up';
+
+  const t = CONFIG.timing;
+  const cycle = t.diveUp + t.diveTuck + t.diveUnder;
+  const at = (game.time + lane.divePhase) % cycle;
+
+  if (at < t.diveUp) return 'up';
+  if (at < t.diveUp + t.diveTuck) return 'tuck';
+  return 'under';
+}
+
+/* The colour of everything the water throws up. Deliberately not a theme
+   colour: bubbles read as bubbles on every environment, and a pale blue sits
+   on top of all seven water colours without disappearing into any of them. */
+const BUBBLE = '#bfe4ff';
+
+/* Turtles used to sink in silence. The tuck phase was already a fair warning
+   in the rules, but nothing on screen said so, which made the row feel like a
+   coin flip rather than a read. Now every group bubbles before it goes, and
+   the one you are actually standing on tells you out loud. */
+function updateDives() {
+  if (!rule('divingTurtles')) return;
+
+  for (const lane of riverLanes) {
+    if (!laneActive(lane)) continue;
+    const y = laneY(lane.row);
+
+    for (const ob of lane.obstacles) {
+      if (!ob.dives) continue;
+
+      const phase = divePhaseName(lane, ob);
+      if (phase === ob.divePhaseWas) continue;
+
+      const first = ob.divePhaseWas === undefined;
+      ob.divePhaseWas = phase;
+      if (first) continue;                 /* nothing to announce on frame one */
+
+      const w = ob.cells * GRID;
+      if (ob.x > WIDTH || ob.x + w < 0) continue;
+
+      const mid = ob.x + w / 2;
+      const underUs = game.riding === ob && game.state === 'play';
+
+      if (phase === 'tuck') {
+        /* Bubbles from every square, so a long raft warns along its length. */
+        for (let c = 0; c < ob.cells; c++) {
+          spawnPuff(ob.x + c * GRID + GRID / 2, y + GRID * 0.6, BUBBLE, 3,
+                    { rise: 30, spread: GRID * 0.45 });
+        }
+        if (underUs) Sound.play('tuck');
+      } else if (phase === 'under') {
+        spawnRing(mid, y + GRID / 2, BUBBLE, { to: GRID * 0.85 });
+        if (underUs) Sound.play('sink');
+      } else {
+        /* Back up. Worth showing, because it is where you are going next. */
+        spawnRing(mid, y + GRID / 2, BUBBLE, { to: GRID * 0.5, life: 0.35 });
+        spawnPuff(mid, y + GRID * 0.5, BUBBLE, 2, { rise: 18 });
+      }
+    }
+  }
+}
+
+
 /* Which square of a multi-square obstacle is the frog standing on? */
 function cellUnder(ob, frogCentre) {
   const i = Math.floor((frogCentre - ob.x) / GRID);
@@ -556,6 +700,7 @@ function update(dt) {
   game.stateTime += dt;
 
   moveObstacles(dt);
+  updateFx(dt);
   if (game.frog) game.frog.hopT += dt * 1000;
 
   switch (game.state) {
@@ -568,6 +713,7 @@ function update(dt) {
         break;
       }
       updateBayHazard(dt);
+      updateDives();
       updateLady(dt);
       updateSlide(dt);
       checkLane(dt);
@@ -879,9 +1025,11 @@ function checkLane(dt) {
       }
 
       if (!riding) {
+        game.riding = null;
         die(sankUnderUs ? 'The turtles dived' : 'Drowned');
         return;
       }
+      game.riding = riding;
 
       /* Crocodile jaws. The body is a perfectly good boat. */
       if (riding.variant === 'gator' && rule('gatorMouthIsDeath') &&
@@ -2208,6 +2356,7 @@ function draw() {
     drawRocket();
     drawParticles();
   } else {
+    drawFx();
     drawGhosts();
     drawLady();
     drawBays();
@@ -3508,7 +3657,8 @@ window.frogger = {
   TWISTS, RIVER_PRESETS, LEVEL_LOOP, levelTag, clampPickedLevel, ghosts,
   ENGINE_PROFILES, SOUNDS, PALETTES, engineProfileFor,
   advanceLevel, startBonusRound, inBonus, held, smashableLanes,
-  startGame, startLevel, hop, laneY, diveState, speedMultiplier,
+  startGame, startLevel, hop, laneY, diveState, divePhaseName, speedMultiplier,
+  updateDives, spawnPuff, spawnRing, updateFx,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };
 

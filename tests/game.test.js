@@ -1520,5 +1520,86 @@ check("shooting an alien scores", (() => {
   return api.bonus.points > before;
 })(), `points ${api.bonus.points}`);
 
+console.log("\n== the turtles tell you first ==");
+
+/* Find a level with diving turtles and get onto the water. */
+const DIVE_LEVEL = (() => {
+  const i = api.LEVELS.findIndex(
+    (l) => l.kind === "cross" && (l.hazards || []).includes("diving")
+  );
+  return i === -1 ? FULL_LEVEL : i + 1;
+})();
+
+function divingOb() {
+  for (const lane of lanes) {
+    if (lane.type !== "river" || !lane.active) continue;
+    const ob = lane.obstacles.find((o) => o.dives);
+    if (ob) return { lane, ob };
+  }
+  return null;
+}
+
+check("the dive cycle has all three phases", (() => {
+  api.startGame(DIVE_LEVEL);
+  frames(1);
+  const found = divingOb();
+  if (!found) return false;
+  const seen = new Set();
+  const cycle = CONFIG.timing.diveUp + CONFIG.timing.diveTuck + CONFIG.timing.diveUnder;
+  for (let i = 0; i < Math.ceil(cycle * 60) + 10; i++) {
+    seen.add(api.divePhaseName(found.lane, found.ob));
+    frames(1);
+  }
+  return seen.has("up") && seen.has("tuck") && seen.has("under");
+})());
+
+check("tucking puts bubbles on the water", (() => {
+  api.startGame(DIVE_LEVEL);
+  frames(1);
+  const found = divingOb();
+  if (!found) return false;
+  game.fx.length = 0;
+  /* Run a whole cycle. Somewhere in there it tucks, and that makes bubbles. */
+  const cycle = CONFIG.timing.diveUp + CONFIG.timing.diveTuck + CONFIG.timing.diveUnder;
+  let sawPuff = false;
+  for (let i = 0; i < Math.ceil(cycle * 60) + 10; i++) {
+    frames(1);
+    if (game.fx.some((f) => f.shape === "puff")) sawPuff = true;
+  }
+  return sawPuff;
+})());
+
+check("going under leaves a ring", (() => {
+  api.startGame(DIVE_LEVEL);
+  frames(1);
+  const found = divingOb();
+  if (!found) return false;
+  game.fx.length = 0;
+  const cycle = CONFIG.timing.diveUp + CONFIG.timing.diveTuck + CONFIG.timing.diveUnder;
+  let sawRing = false;
+  for (let i = 0; i < Math.ceil(cycle * 60) + 10; i++) {
+    frames(1);
+    if (game.fx.some((f) => f.shape === "ring")) sawRing = true;
+  }
+  return sawRing;
+})());
+
+check("effects clear themselves up", (() => {
+  api.spawnPuff(100, 100, "#fff", 4, { life: 0.2 });
+  api.spawnRing(100, 100, "#fff", { life: 0.2 });
+  const had = game.fx.length;
+  for (let i = 0; i < 40; i++) api.updateFx(1 / 60);
+  return had > 0 && game.fx.length === 0;
+})(), `left ${game.fx.length}`);
+
+check("the warning is quiet enough to live with", (() => {
+  const tuck = api.SOUNDS.tuck, sink = api.SOUNDS.sink;
+  if (!tuck || !sink) return false;
+  /* These play every few seconds all level. Louder than a hop and they stop
+     being information and start being noise. */
+  return tuck.gain < api.SOUNDS.hop.gain && sink.gain <= api.SOUNDS.hop.gain;
+})());
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);
