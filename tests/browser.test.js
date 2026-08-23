@@ -330,20 +330,42 @@ try {
   const at1 = await evaluate("frogger.Music._audio.currentTime");
   check("and keeps playing through", at1 > began, `${began} -> ${at1}`);
 
-  /* The whole point of the prefetch: by now the files should be in memory,
-     so the next track starts instantly rather than buffering. */
+  /* The prefetch is deliberately small now: what is playing, plus one behind
+     it. It used to pull all fifteen megabytes down on load, which is most of
+     a library nobody will hear that run.
+
+     So there are two things to prove, and they pull in opposite directions:
+     that it keeps one ready ahead, and that it does NOT hoover up the lot. */
   await evaluate("frogger.Music.warmUp()");
   for (let i = 0; i < 60; i++) {
     if (await evaluate("Object.keys(frogger.Music._blobs).length >= 2")) break;
     await new Promise((r) => setTimeout(r, 250));
   }
   const cached = await evaluate("Object.keys(frogger.Music._blobs).length");
-  check("tracks are fetched into memory ahead of time", cached >= 2,
-    `${cached} cached`);
-  check("and playback uses the in-memory copy",
+  const total = await evaluate("frogger.TRACKS.filter(t => t.file).length");
+
+  check("the next track is fetched ahead of time", cached >= 2, `${cached} cached`);
+  check("but not the whole library", cached < total, `${cached} of ${total} cached`);
+
+  /* Play something we know is in memory, and check it came from memory. A
+     track that has not been fetched streams from its file instead, which is
+     correct and is covered by the fallback check below. */
+  await evaluate(`(() => {
+    const inMemory = frogger.TRACKS.find(t => t.file && frogger.Music._blobs[t.file]);
+    if (inMemory) frogger.Music.playNamed(inMemory.name);
+  })()`);
+  await frames(10);
+
+  check("and a track that IS in memory plays from memory",
     await evaluate("String(frogger.Music._audio.src).startsWith('blob:')") ||
     cached === 0,
     String(await evaluate("String(frogger.Music._audio.src).slice(0, 40)")));
+
+  check("while one that is not still has a source to play from",
+    await evaluate(`(() => {
+      const t = frogger.TRACKS.find(x => x.file && !frogger.Music._blobs[x.file]);
+      return !t || frogger.Music.sourceFor(t) === t.file;
+    })()`));
 
   /* Every file in the list must really be there and be servable. */
   const files = await evaluate("frogger.TRACKS.filter(t => t.file).map(t => t.file)");
@@ -415,8 +437,18 @@ try {
   check("the engine is running", await evaluate("frogger.Engine.running === true"));
 
   /* Tap the engine's own output with an analyser and measure it. Checking the
-     nodes exist proves nothing: this proves sound is coming out. */
-  const measure = async (throttle, ms) => await evaluate(`(async () => {
+     nodes exist proves nothing: this proves sound is coming out.
+
+     Driven through the controls rather than by calling setThrottle. The game
+     loop sets the throttle from `held` on every single frame, so poking
+     setThrottle from outside was a race with the next frame and the reading
+     depended on which one won. Holding a key is what a player does and it is
+     what the loop is listening to.
+
+     Sideways, deliberately: the throttle answers to any direction, and going
+     up would drive the truck into the river, which swaps the whole engine
+     profile to the boat and measures the wrong machine. */
+  const measure = async (moving, ms) => await evaluate(`(async () => {
     const E = frogger.Engine;
     const ctx = E._ctx;
     if (!E._nodes) return -1;
@@ -425,20 +457,31 @@ try {
       window.__an.fftSize = 2048;
     }
     try { E._nodes.out.connect(window.__an); } catch (e) {}
+
+    /* Park it on the start row. Steering is sideways only below, so it stays
+       on this row and cannot wander into the river, which would swap the
+       whole engine profile to the boat and measure the wrong machine. */
+    const startLane = frogger.lanes[frogger.lanes.length - 1];
+    frogger.bonus.y = frogger.laneY(startLane.row);
+
+    Object.keys(frogger.held).forEach(k => frogger.held[k] = false);
+    frogger.held.left = ${moving};
     E._revUntil = 0;
-    E.setThrottle(${throttle});
+
     await new Promise(r => setTimeout(r, ${ms}));
-    E._revUntil = 0;
-    E.setThrottle(${throttle});
+
     const buf = new Float32Array(window.__an.fftSize);
     window.__an.getFloatTimeDomainData(buf);
+
+    Object.keys(frogger.held).forEach(k => frogger.held[k] = false);
+
     let sum = 0;
     for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     return Math.sqrt(sum / buf.length);
   })()`);
 
-  const idleLevel = await measure(0, 500);
-  const fullLevel = await measure(1, 500);
+  const idleLevel = await measure(false, 600);
+  const fullLevel = await measure(true, 600);
 
   check("the engine is audible at idle", idleLevel > 0.0005, `rms ${idleLevel}`);
   check("it gets louder under throttle", fullLevel > idleLevel,

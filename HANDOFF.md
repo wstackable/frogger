@@ -196,8 +196,11 @@ public. Still unresolved. Ask Will.
 
 ### 6c. Smaller things
 
-- `tests/browser.test.js` is the slow suite and only runs by hand. Worth
-  wiring into whatever CI ever exists.
+- `tests/browser.test.js` is the slow suite and only runs by hand, and it is
+  now green end to end (60 checks). Worth wiring into whatever CI ever exists.
+  Note that its output is buffered when it is not attached to a terminal, so a
+  run that looks hung may just be silent. Check Chrome's CPU rather than the
+  log.
 - The crossing levels' effects layer (`game.fx`) is two shapes, a puff and a
   ring. Anything wanting a third shape adds it there rather than inventing a
   new system.
@@ -238,6 +241,11 @@ Each of these cost real time to find.
 - **`Engine.start()` is a no-op while already running**, so going straight from
   one special level into another kept the previous machine's engine sound.
   Stop before switching profile.
+- **Do not start a `setInterval` inside a CDP `evaluate`.** An attempt to pin
+  the truck's position during the engine measurement did exactly that, and the
+  evaluate never returned: Chrome sat at 100% and the suite hung for twenty
+  minutes with no output, because its stdout is buffered when it is not on a
+  terminal. Set the value once and design the test so it stays put.
 - **Pass `--mute-audio` to headless Chrome** in tests and screenshot scripts, or
   the game's music plays out of the speakers. WebAudio still renders while
   muted, so an AnalyserNode can still measure output.
