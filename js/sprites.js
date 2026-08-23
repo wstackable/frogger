@@ -331,6 +331,27 @@ const SPRITES = {
     '................',
   ],
 
+  /* The same head with the jaws open. Ride the back of a crocodile all you
+     like; the head is only a square while the mouth is shut. */
+  gatorJaws: [
+    'jjjjjjj.........',
+    'JJJJJJJjj.......',
+    'JKWJJJJJJjj.....',
+    'JWJJJJJJJJWjj...',
+    'jJJJJJJWWWWWjj..',
+    'JJJJJJWWWWWWWjj.',
+    'JJJJJ...........',
+    'JJJJ............',
+    'JJJJ............',
+    'JJJJJ...........',
+    'JJJJJJWWWWWWWjj.',
+    'jJJJJJJWWWWWjj..',
+    'JWJJJJJJJJWjj...',
+    'JKWJJJJJJjj.....',
+    'JJJJJJJjj.......',
+    'jjjjjjj.........',
+  ],
+
   /* -------------------------------------------------------------- the snakes
      They patrol the median from level 3, which takes the safety away from
      the one row that used to have it. */

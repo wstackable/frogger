@@ -316,11 +316,62 @@ if (gator) {
   check("riding a crocodile's back is safe", game.state === "play",
     game.state + " " + game.deathReason);
 
-  gator.x = game.frog.x - headCell * GRID - GRID / 2;
-  frames(1);
-  check("the crocodile's jaws kill you", game.state === "dying", game.state);
-  check("croc river death reason", game.deathReason === "Eaten by a crocodile",
-    game.deathReason);
+  /* The jaws work now, so the head is only fatal while the mouth is open.
+     Waiting for a phase has to happen with the frog somewhere safe, otherwise
+     it drifts off a log and drowns before the mouth ever gets there. */
+  function jawTest(want) {
+    reset();
+    const lane = lanes.find(l => l.hasGators);
+    const croc = lane.obstacles.find(o => o.variant === "gator");
+    if (!croc) return { state: "no croc" };
+
+    const head = croc.vx > 0 ? croc.cells - 1 : 0;
+
+    /* Park on solid ground and top the clock up while time goes by. */
+    game.frog.row = lanes.length - 1;
+    for (let i = 0; i < 60 * 12; i++) {
+      if (api.gatorPhase(lane, croc) === want) break;
+      game.timeLeft = CONFIG.timeLimit;
+      frames(1);
+    }
+    if (api.gatorPhase(lane, croc) !== want) return { state: "never " + want };
+
+    lane.obstacles.forEach(o => { if (o !== croc) o.x = -9999; });
+    game.frog.row = lane.row;
+    croc.x = game.frog.x - head * GRID - GRID / 2;
+    frames(1);
+    return { state: game.state, reason: game.deathReason };
+  }
+
+  const shut = jawTest("shut");
+  check("the head is safe while the mouth is shut", shut.state === "play",
+    `${shut.state} ${shut.reason || ""}`);
+
+  const warning = jawTest("opening");
+  check("the warning phase is still safe to stand in", warning.state === "play",
+    `${warning.state} ${warning.reason || ""}`);
+
+  const bitten = jawTest("open");
+  check("the crocodile's jaws kill you once they are open",
+    bitten.state === "dying", bitten.state);
+  check("croc river death reason", bitten.reason === "Eaten by a crocodile",
+    bitten.reason);
+
+  check("a row of crocodiles does not snap in unison", (() => {
+    reset();
+    const lane = lanes.find(l => l.hasGators);
+    const crocs = lane.obstacles.filter(o => o.variant === "gator");
+    if (crocs.length < 2) return true;
+    for (let i = 0; i < 60 * 6; i++) {
+      if (new Set(crocs.map(o => api.gatorPhase(lane, o))).size > 1) return true;
+      frames(1);
+    }
+    return false;
+  })());
+
+  check("the jaw warning is long enough to hop out of",
+    api.GATOR.opening * 1000 > CONFIG.hopDuration * 2,
+    `opening ${api.GATOR.opening}s vs hop ${CONFIG.hopDuration}ms`);
 }
 
 console.log("\n== snakes on the median ==");

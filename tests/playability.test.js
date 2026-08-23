@@ -99,6 +99,10 @@ function riverLanding(lane, centre, holdFrames = 24) {
     if (divePhaseAt(lane, ob) !== "up") return null;
     if (divePhaseAt(lane, ob, holdFrames * DT) === "under") return null;
 
+    /* The jaws open and shut now, so the head is only fatal some of the time.
+       The bot still avoids it outright. That is a legitimate way to play the
+       row and it keeps this a test of whether the level can be crossed, not
+       of how well the bot reads a rhythm. */
     if (ob.variant === "gator") {
       const cell = Math.floor((centre - ob.x) / GRID);
       const head = ob.vx > 0 ? ob.cells - 1 : 0;

@@ -687,6 +687,77 @@ function updateDives() {
 }
 
 
+/* ==========================================================================
+   Crocodile jaws
+   --------------------------------------------------------------------------
+   Three phases on a loop, deliberately the same shape as the diving turtles:
+
+     shut      the head is a ride like any other square
+     opening   parting. STILL SAFE. this is the warning.
+     open      the head cell bites
+
+   Every crocodile runs its own offset so a row never snaps shut in unison,
+   which would turn a rhythm into a single gate.
+   ========================================================================== */
+
+function gatorPhase(lane, ob) {
+  if (ob.variant !== 'gator' || !rule('gatorMouthIsDeath')) return 'shut';
+
+  const cycle = GATOR.shut + GATOR.opening + GATOR.open;
+  const offset = lane.row * 1.7 + (ob.index + 1) * 0.9;
+  const at = (game.time + offset) % cycle;
+
+  if (at < GATOR.shut) return 'shut';
+  if (at < GATOR.shut + GATOR.opening) return 'opening';
+  return 'open';
+}
+
+/* Only the wide-open mouth bites. */
+function gatorBites(lane, ob) {
+  return gatorPhase(lane, ob) === 'open';
+}
+
+/* The crocodile you are riding tells you what its mouth is doing. Only that
+   one, for the same reason as the turtles: a row of them all creaking at once
+   is noise, and the only jaws that can reach you are the ones under your feet. */
+function updateGators() {
+  if (!hazard('gator')) return;
+
+  for (const lane of riverLanes) {
+    if (!laneActive(lane)) continue;
+    const y = laneY(lane.row);
+
+    for (const ob of lane.obstacles) {
+      if (ob.variant !== 'gator') continue;
+
+      const phase = gatorPhase(lane, ob);
+      if (phase === ob.gatorPhaseWas) continue;
+
+      const first = ob.gatorPhaseWas === undefined;
+      ob.gatorPhaseWas = phase;
+      if (first) continue;
+
+      const w = ob.cells * GRID;
+      if (ob.x > WIDTH || ob.x + w < 0) continue;
+
+      const head = ob.x + (ob.vx > 0 ? w - GRID / 2 : GRID / 2);
+      const underUs = game.riding === ob && game.state === 'play';
+
+      if (phase === 'opening') {
+        spawnPuff(head, y + GRID * 0.5, TOOTH, 3, { rise: 20, spread: GRID * 0.5 });
+        if (underUs) Sound.play('creak');
+      } else if (phase === 'shut') {
+        spawnRing(head, y + GRID / 2, TOOTH, { to: GRID * 0.45, life: 0.3 });
+        if (underUs) Sound.play('chomp');
+      }
+    }
+  }
+}
+
+/* Teeth colour, fixed for the same reason as the bubbles. */
+const TOOTH = '#fff2cc';
+
+
 /* Which square of a multi-square obstacle is the frog standing on? */
 function cellUnder(ob, frogCentre) {
   const i = Math.floor((frogCentre - ob.x) / GRID);
@@ -722,6 +793,7 @@ function update(dt) {
       }
       updateBayHazard(dt);
       updateDives();
+      updateGators();
       updateSnakes(dt);
       updateLady(dt);
       updateSlide(dt);
@@ -1147,7 +1219,7 @@ function checkLane(dt) {
       game.riding = riding;
 
       /* Crocodile jaws. The body is a perfectly good boat. */
-      if (riding.variant === 'gator' && rule('gatorMouthIsDeath') &&
+      if (riding.variant === 'gator' && gatorBites(lane, riding) &&
           cellUnder(riding, centre) === gatorHeadCell(riding)) {
         die('Eaten by a crocodile');
         return;
@@ -2619,7 +2691,11 @@ function drawObstacles() {
       /* During the rampage the river is full of boats to ram, and nothing
          sinks, because nothing is trying to drown you. */
       const kind = rampage && lane.type === 'river' ? 'boat' : (ob.variant || lane.kind);
-      const art = Art.of(kind);
+      /* A literal, so the test that reads this file for every picture the
+         engine asks for finds it and holds the themes to it. */
+      const jawsOpen = !rampage && ob.variant === 'gator' &&
+                       gatorPhase(lane, ob) !== 'shut';
+      const art = jawsOpen ? Art.of('gatorOpen') : Art.of(kind);
       const dive = rampage ? { sink: 0 } : diveState(lane, ob);
 
       /* A coiling snake shakes on the spot. It is the only tell that reads at
@@ -3779,6 +3855,7 @@ window.frogger = {
   startGame, startLevel, hop, laneY, diveState, divePhaseName, speedMultiplier,
   updateDives, spawnPuff, spawnRing, updateFx,
   updateSnakes, SNAKE, snakeLane, levelRule,
+  updateGators, gatorPhase, gatorBites, GATOR, gatorHeadCell, cellUnder,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };
 

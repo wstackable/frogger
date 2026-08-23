@@ -356,6 +356,26 @@ const HELI = {
 };
 
 /* --------------------------------------------------------------------------
+   CROCODILES  ::  the jaws open and shut
+
+   A crocodile whose mouth is permanently open is one square you learn to
+   avoid once and then never think about again. In the arcade the jaws worked,
+   and that is the difference between a rule and a rhythm: the head is a
+   perfectly good ride most of the time, and the level is about noticing when
+   it is not.
+
+   Same three-phase shape as the diving turtles, for the same reason. The
+   middle phase is your warning and it is still safe to be standing there.
+   -------------------------------------------------------------------------- */
+
+const GATOR = {
+  shut:    2.6,   /* jaws closed. the head is just another square. */
+  opening: 0.55,  /* jaws parting. STILL SAFE. this is the warning. */
+  open:    1.5,   /* wide. now the head cell bites. */
+};
+
+
+/* --------------------------------------------------------------------------
    SNAKES  ::  the median stops being a rest stop
 
    A snake that only slides back and forth is just a car on a slower road, and
@@ -749,6 +769,8 @@ const THEMES = {
                  capLeft: 'logLeft', capRight: 'logRight' },
       gator:   { draw: 'pixels', sprite: 'gatorBody', fit: 'repeat',
                  capLeft: 'gatorTail', capRight: 'gatorHead', faces: 'right' },
+      gatorOpen: { draw: 'pixels', sprite: 'gatorBody', fit: 'repeat',
+                 capLeft: 'gatorTail', capRight: 'gatorJaws', faces: 'right' },
       turtle:  { draw: 'pixels', sprite: 'turtle', fit: 'repeat', faces: 'left' },
       snake:   { draw: 'pixels', sprite: 'snakeBody', fit: 'repeat',
                  capLeft: 'snakeHead', capRight: 'snakeTail', faces: 'left' },
@@ -803,6 +825,7 @@ const THEMES = {
 
       log:     { draw: 'emoji', glyph: '🪵', fit: 'repeat' },
       gator:   { draw: 'emoji', glyph: '🐊', fit: 'repeat', faces: 'left' },
+      gatorOpen: { draw: 'emoji', glyph: '🐊', fit: 'repeat', faces: 'left' },
       turtle:  { draw: 'emoji', glyph: '🐢', fit: 'repeat', faces: 'left' },
       snake:   { draw: 'emoji', glyph: '🐍', fit: 'repeat', faces: 'left' },
 
