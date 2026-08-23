@@ -228,6 +228,8 @@ const game = {
 
   frog: null,
   deathReason: '',
+  menuOpen: false,     /* the Escape menu */
+  menuPick: 0,
   bonusTotal: 0,       /* what the last bonus round was worth */
   ghostTime: 0,        /* banked world time, for the boneyard level */
   pickedLevel: 1,      /* which level the title screen is pointing at */
@@ -251,8 +253,7 @@ function newFrog() {
     hopFromX: x,
     hopFromY: laneY(START_ROW),
     hopT: 1e9,
-    slideDir: null,
-    slideAt: 0,
+    iceNext: 0,
   };
 }
 
@@ -568,7 +569,7 @@ function update(dt) {
       }
       updateBayHazard(dt);
       updateLady(dt);
-      updateSlide();
+      updateSlide(dt);
       checkLane(dt);
       break;
     }
@@ -589,6 +590,11 @@ function update(dt) {
 
     case 'levelClear': {
       if (game.stateTime > 2.0) advanceLevel();
+      break;
+    }
+
+    case 'victory': {
+      updateVictory(dt);
       break;
     }
 
@@ -640,6 +646,14 @@ function update(dt) {
 }
 
 function advanceLevel() {
+  /* Finishing the last level in the plan earns the celebration. After that it
+     loops, so this only happens once a run. */
+  if (game.level === LEVELS.length) {
+    game.level++;
+    startVictory();
+    return;
+  }
+
   game.level++;
 
   /* Beginner mode hands every frog back, so a rough level never ends the run.
@@ -1439,6 +1453,212 @@ function updateHeli(dt) {
 }
 
 
+
+
+/* ==========================================================================
+   THE PAUSE MENU
+   --------------------------------------------------------------------------
+   Escape opens it from anywhere, including the middle of a bonus round. It is
+   the only way back to the main menu without reloading the page.
+   ========================================================================== */
+
+const PAUSE_ITEMS = [
+  { label: 'RESUME',        act: 'resume' },
+  { label: 'RESTART LEVEL', act: 'restart' },
+  { label: 'MAIN MENU',     act: 'menu' },
+];
+
+function openPauseMenu() {
+  if (game.state === 'title' || game.state === 'gameOver') return;
+  game.paused = true;
+  game.menuOpen = true;
+  game.menuPick = 0;
+  clearHeld();
+}
+
+function closePauseMenu() {
+  game.menuOpen = false;
+  game.paused = false;
+}
+
+function pauseMenuMove(step) {
+  const n = PAUSE_ITEMS.length;
+  game.menuPick = ((game.menuPick + step) % n + n) % n;
+  Sound.play('hop');
+}
+
+function pauseMenuChoose() {
+  const act = PAUSE_ITEMS[game.menuPick].act;
+  game.menuOpen = false;
+
+  if (act === 'resume') { game.paused = false; return; }
+
+  if (act === 'restart') {
+    game.paused = false;
+    enterLevel();                 /* same level, from the top */
+    return;
+  }
+
+  /* Back to the title screen. Leave the level you were on selected. */
+  game.paused = false;
+  game.pickedLevel = Math.min(game.level, LEVELS.length);
+  Engine.stop();
+  calmDown();
+  setState('title');
+  Music.restorePrevious();
+}
+
+
+/* ==========================================================================
+   THE VICTORY SCREEN
+   --------------------------------------------------------------------------
+   Fireworks, then a credits roll, once the last level in the plan is done.
+   Modelled on the Phoenix 89 one.
+   ========================================================================== */
+
+const victory = { fireworks: [], nextFirework: 0, scroll: 0 };
+
+function startVictory() {
+  victory.fireworks.length = 0;
+  victory.nextFirework = 0;
+  victory.scroll = 0;
+  Sound.play('fanfare');
+  setState('victory');
+}
+
+function updateVictory(dt) {
+  const t = game.stateTime;
+
+  /* Fireworks throughout. */
+  victory.nextFirework -= dt;
+  if (victory.nextFirework <= 0) {
+    victory.nextFirework = VICTORY.fireworkEvery;
+    const x = GRID + rng() * (WIDTH - GRID * 2);
+    const y = GRID * 2 + rng() * (HEIGHT * 0.45);
+    const hues = ['#ffd84a', '#ff4d6d', '#4dd2ff', '#7dff6b', '#ff9c3d', '#e08bff'];
+    spawnDebris(x, y, hues[Math.floor(rng() * hues.length)], 26);
+    Sound.play(rng() < 0.5 ? 'home' : 'life');
+  }
+
+  for (let i = bonus.particles.length - 1; i >= 0; i--) {
+    const p = bonus.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { bonus.particles.splice(i, 1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 130 * dt;               /* drifting, not falling like debris */
+  }
+
+  if (t > VICTORY.celebrateTime) victory.scroll += VICTORY.scrollSpeed * dt;
+}
+
+function creditsHeight() {
+  return CREDITS.reduce((h, l) => h + (l.size + l.gap) * GRID, 0);
+}
+
+function drawVictory() {
+  const cx = WIDTH / 2;
+  const t = game.stateTime;
+
+  ctx.fillStyle = 'rgba(0,0,10,0.86)';
+  ctx.fillRect(0, GRID, WIDTH, HEIGHT - GRID * 2);
+
+  for (const p of bonus.particles) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.6));
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  if (t <= VICTORY.celebrateTime) {
+    const pulse = 1 + Math.abs(Math.sin(t * 3.4)) * 0.16;
+    ctx.font = `bold ${Math.round(GRID * 1.05 * pulse)}px "Courier New", monospace`;
+    ctx.fillStyle = Math.floor(t * 6) % 2 ? '#fff' : Art.color('accent');
+    ctx.fillText('VICTORY', cx, HEIGHT * 0.38);
+
+    ctx.font = `bold ${Math.round(GRID * 0.36)}px "Courier New", monospace`;
+    ctx.fillStyle = '#fff';
+    ctx.fillText('every level cleared', cx, HEIGHT * 0.38 + GRID * 0.95);
+    ctx.font = `${Math.round(GRID * 0.3)}px "Courier New", monospace`;
+    ctx.fillStyle = Art.color('textDim');
+    ctx.fillText(`final score  ${game.score}`, cx, HEIGHT * 0.38 + GRID * 1.5);
+    return;
+  }
+
+  /* The credits crawl, looping forever. */
+  const total = creditsHeight();
+  let y = HEIGHT - (victory.scroll % (total + HEIGHT)) + GRID;
+
+  for (const line of CREDITS) {
+    const size = line.size * GRID;
+    if (y > GRID * 0.5 && y < HEIGHT - GRID * 0.5 && line.text) {
+      ctx.font = `bold ${Math.round(size)}px "Courier New", monospace`;
+      ctx.fillStyle = Art.color(line.color) || '#fff';
+      ctx.fillText(line.text, cx, y);
+
+      if (line.sprite) {
+        const s = size * 1.15;
+        const w = ctx.measureText(line.text).width;
+        drawArt(ctx, Art.of(line.sprite), cx - w / 2 - s * 1.5, y - s / 2, s, s,
+                { cells: 1, time: game.time });
+      }
+    }
+    y += size + line.gap * GRID;
+  }
+
+  if (Math.floor(game.time * 1.4) % 2 === 0) {
+    ctx.font = `bold ${Math.round(GRID * 0.3)}px "Courier New", monospace`;
+    ctx.fillStyle = '#fff';
+    ctx.fillText('SPACE to keep playing', cx, HEIGHT - GRID * 1.4);
+  }
+}
+
+function drawPauseMenu() {
+  if (!game.menuOpen) return;
+
+  const cx = WIDTH / 2;
+  const cy = HEIGHT / 2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillRect(0, GRID, WIDTH, HEIGHT - GRID * 2);
+
+  const panelW = WIDTH * 0.72;
+  const panelH = GRID * 4.6;
+  ctx.fillStyle = 'rgba(8,8,14,0.95)';
+  roundRect(ctx, cx - panelW / 2, cy - panelH / 2, panelW, panelH, 12);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.round(GRID * 0.5)}px "Courier New", monospace`;
+  ctx.fillStyle = '#fff';
+  ctx.fillText('PAUSED', cx, cy - GRID * 1.5);
+
+  PAUSE_ITEMS.forEach((item, i) => {
+    const y = cy - GRID * 0.35 + i * GRID * 0.68;
+    const on = i === game.menuPick;
+    if (on) {
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      roundRect(ctx, cx - panelW * 0.4, y - GRID * 0.26, panelW * 0.8, GRID * 0.52, 6);
+      ctx.fill();
+    }
+    ctx.font = `bold ${Math.round(GRID * 0.34)}px "Courier New", monospace`;
+    ctx.fillStyle = on ? Art.color('accent') : Art.color('textDim');
+    ctx.fillText((on ? '▸ ' : '  ') + item.label, cx, y);
+  });
+
+  ctx.font = `${Math.round(GRID * 0.24)}px "Courier New", monospace`;
+  ctx.fillStyle = Art.color('textDim');
+  ctx.fillText('up / down then SPACE  ::  ESC closes', cx, cy + GRID * 1.75);
+}
+
+
 /* ==========================================================================
    Input
    ========================================================================== */
@@ -1477,29 +1697,63 @@ function hop(dx, dy) {
   Sound.play('hop');
   checkLane(0);          /* react now, do not wait for the next frame */
 
-  /* On ice you keep going SIDEWAYS. Only sideways: an early version slid you
-     an extra row as well, which meant you could not stop on a road lane at
-     all and the late ice level was unplayable. Sliding side to side is the
-     recognisable thing anyway, and it makes the twist about aiming rather
-     than about dying. The slide is a second, separate hop, so it gets checked
-     for cars and water exactly like the first one. */
-  if (dx !== 0 && twist('ice') && !sliding && game.state === 'play') {
-    frog.slideDir = [dx, 0];
-    frog.slideAt = game.time + TWISTS.slideDelay;
+  /* On ice, moving at all commits you. Once you are off solid ground the
+     slide takes over and keeps carrying you forward. */
+  if (twist('ice') && !sliding && game.state === 'play' && !onSolidGround()) {
+    if (!frog.iceNext) frog.iceNext = game.time + TWISTS.iceFirstStep;
   }
 }
 
 /* Set while a slide is being performed, so a slide cannot cause a slide. */
 let sliding = false;
 
-function updateSlide() {
+/* The rows you can actually stand still on: the start line, the median, and
+   the bank at the top. Everything in between is ice. */
+function onSolidGround() {
   const frog = game.frog;
-  if (!frog || !frog.slideDir || game.time < frog.slideAt) return;
-  const [dx, dy] = frog.slideDir;
-  frog.slideDir = null;
-  sliding = true;
-  hop(dx, dy);
-  sliding = false;
+  if (!frog) return true;
+  const lane = lanes[frog.row];
+  if (!lane) return true;
+  return lane.type === 'start' || lane.type === 'safe' ||
+         lane.type === 'home' || lane.background === 'median';
+}
+
+/* --------------------------------------------------------------------------
+   ICE: the slide.
+
+   Reaching the median cancels it, which is what makes the median matter and
+   splits the level into two committed runs, the road then the river.
+   -------------------------------------------------------------------------- */
+function updateSlide(dt) {
+  const frog = game.frog;
+  if (!frog || game.state !== 'play') return;
+
+  if (!twist('ice')) { frog.iceNext = 0; return; }
+
+  if (onSolidGround()) {
+    frog.iceNext = 0;              /* solid ground. breathe. */
+    return;
+  }
+
+  if (!frog.iceNext) {
+    frog.iceNext = game.time + TWISTS.iceFirstStep;
+    return;
+  }
+
+  if (game.time >= frog.iceNext) {
+    frog.iceNext = game.time + TWISTS.iceStep;
+    sliding = true;
+    hop(0, -1);                    /* carried forward whether you like it or not */
+    sliding = false;
+  }
+}
+
+/* How far through the current slide we are, for the skid marks. */
+function slideProgress() {
+  const frog = game.frog;
+  if (!frog || !frog.iceNext) return 0;
+  const left = frog.iceNext - game.time;
+  return Math.max(0, Math.min(1, 1 - left / TWISTS.iceStep));
 }
 
 const KEYS = {
@@ -1534,6 +1788,23 @@ window.addEventListener('keyup', (e) => setHeld(e.key, false));
 window.addEventListener('blur', clearHeld);
 
 window.addEventListener('keydown', (e) => {
+  /* Escape opens and closes the menu from anywhere. */
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (game.menuOpen) closePauseMenu();
+    else openPauseMenu();
+    return;
+  }
+
+  /* While the menu is up it owns the keyboard. */
+  if (game.menuOpen) {
+    e.preventDefault();
+    const m = KEYS[e.key];
+    if (m && m[1] !== 0) pauseMenuMove(m[1]);
+    if (e.key === ' ' || e.key === 'Enter') pauseMenuChoose();
+    return;
+  }
+
   const move = KEYS[e.key];
   if (move) {
     e.preventDefault();
@@ -1558,6 +1829,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
     if (game.state === 'title' || game.state === 'gameOver') startGame();
+    else if (game.state === 'victory') { game.level++; enterLevel(); }
     else game.paused = !game.paused;
   }
 
@@ -1770,9 +2042,52 @@ function draw() {
   }
 
   drawDeathBanner();
+  drawLevelBanner();
   drawOverlay();
   drawBonusOverlay();
+  if (game.state === 'victory') drawVictory();
+  drawPauseMenu();
   drawNotice();
+}
+
+/* --------------------------------------------------------------------------
+   What this level is, and what is different about it. Shown for a moment as
+   the level starts, because a name on its own tells you nothing.
+   -------------------------------------------------------------------------- */
+function drawLevelBanner() {
+  if (game.state !== 'play' || game.menuOpen) return;
+  const age = game.stateTime;
+  if (age > 3.2) return;
+
+  const p = plan();
+  if (!p.blurb) return;
+
+  const alpha = Math.min(1, age / 0.25) * Math.max(0, Math.min(1, (3.2 - age) / 0.6));
+  const cx = WIDTH / 2;
+  const y = HEIGHT * 0.30;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const w = WIDTH - GRID * 0.8;
+  ctx.fillStyle = 'rgba(6,6,12,0.82)';
+  roundRect(ctx, cx - w / 2, y - GRID * 0.72, w, GRID * 1.44, 10);
+  ctx.fill();
+
+  ctx.font = `bold ${Math.round(GRID * 0.3)}px "Courier New", monospace`;
+  ctx.fillStyle = Art.color('textDim');
+  ctx.fillText(`LEVEL ${game.level}`, cx, y - GRID * 0.42);
+
+  ctx.font = `bold ${Math.round(GRID * 0.42)}px "Courier New", monospace`;
+  ctx.fillStyle = '#fff';
+  ctx.fillText(levelName(game.level).toUpperCase(), cx, y);
+
+  ctx.font = `${Math.round(GRID * 0.26)}px "Courier New", monospace`;
+  ctx.fillStyle = Art.color('accent');
+  ctx.fillText(p.blurb, cx, y + GRID * 0.44);
+  ctx.restore();
 }
 
 /* The R / M / C popup. Drawn last so it sits on top of everything, including
@@ -2304,23 +2619,52 @@ function updateGhosts(dt) {
       phase: rng() * 6.28,
     });
   }
+  /* This is the whole point of the level. While the world is frozen, which is
+     whenever you are standing still, the ghosts come for you. Move and they
+     back off. So you cannot stop, and you cannot rush either. */
+  const frozen = game.state === 'play' && game.ghostTime <= 0.001;
+  const frog = game.frog;
+
   for (const g of ghosts) {
-    g.x += g.vx * dt;
-    g.y += g.vy * dt;
-    if (g.x < -GRID) g.x = WIDTH;
-    if (g.x > WIDTH) g.x = -GRID;
-    if (g.y < GRID) g.y = HEIGHT - GRID * 2;
-    if (g.y > HEIGHT - GRID) g.y = GRID;
+    if (frog && game.state === 'play') {
+      const fx = frog.x + GRID / 2;
+      const fy = laneY(frog.row) + GRID / 2;
+      const dx = fx - (g.x + GRID / 2);
+      const dy = fy - (g.y + GRID / 2);
+      const d = Math.hypot(dx, dy) || 1;
+      const speed = frozen ? TWISTS.ghostSpeed : -TWISTS.ghostRetreat;
+      g.x += (dx / d) * speed * dt;
+      g.y += (dy / d) * speed * dt;
+
+      /* Caught. */
+      if (frozen && d < GRID * 0.62) {
+        die('A ghost got you');
+        return;
+      }
+    } else {
+      g.x += g.vx * dt;
+      g.y += g.vy * dt;
+    }
+
+    if (g.x < -GRID * 2) g.x = WIDTH + GRID;
+    if (g.x > WIDTH + GRID * 2) g.x = -GRID;
+    if (g.y < GRID) g.y = GRID;
+    if (g.y > HEIGHT - GRID * 2) g.y = HEIGHT - GRID * 2;
   }
 }
 
 function drawGhosts() {
   if (!twist('ghost')) return;
   const art = Art.of('ghost');
+  const frozen = game.ghostTime <= 0.001;
+
   for (const g of ghosts) {
     const bob = Math.sin(game.time * 1.6 + g.phase) * GRID * 0.12;
-    /* Faint, but they have to actually be noticeable or there is no point. */
-    const fade = 0.22 + 0.12 * Math.abs(Math.sin(game.time * 0.9 + g.phase));
+    /* Solid and obvious while they are hunting, faint while they are not, so
+       you can see at a glance whether you are safe. */
+    const fade = frozen
+      ? 0.7 + 0.25 * Math.abs(Math.sin(game.time * 4 + g.phase))
+      : 0.2;
     drawArt(ctx, art, g.x, g.y + bob, GRID * 1.25, GRID * 1.25,
             { cells: 1, alpha: fade, time: game.time });
   }
@@ -2841,9 +3185,15 @@ function drawLevelList(cx, cy) {
   /* Where you are about to play it. */
   const p = planFor(game.pickedLevel);
   const env = (ENVIRONMENTS[p.env] || {}).label || '';
-  ctx.font = `bold ${Math.round(GRID * 0.26)}px "Courier New", monospace`;
+  ctx.font = `bold ${Math.round(GRID * 0.24)}px "Courier New", monospace`;
   ctx.fillStyle = Art.color('accent');
-  ctx.fillText(env, cx, cy + edge + GRID * 0.72);
+  ctx.fillText(env, cx, cy + edge + GRID * 0.6);
+
+  if (p.blurb) {
+    ctx.font = `${Math.round(GRID * 0.25)}px "Courier New", monospace`;
+    ctx.fillStyle = Art.color('textDim');
+    ctx.fillText(p.blurb, cx, cy + edge + GRID * 1.0);
+  }
 }
 
 /* Tell the player what is new about the level they are walking into. Half
@@ -2924,6 +3274,7 @@ window.frogger = {
   MODES, BONUS, bonus, mode, setting, rule, cycleMode, isBonusLevel, Engine, ENGINE,
   LEVELS, ENVIRONMENTS, MUSIC, planFor, lapsFor, plan, levelKind, levelName,
   hazard, twist, applyPlan, enterLevel, buildObstacles, trafficRows,
+  onSolidGround, updateSlide, slideProgress,
   rocket, heli, startRocket, startHeli, updateRocket, updateHeli, ROCKET, HELI,
   TWISTS, RIVER_PRESETS, LEVEL_LOOP, levelTag, clampPickedLevel, ghosts,
   ENGINE_PROFILES, SOUNDS, PALETTES, engineProfileFor,

@@ -209,60 +209,77 @@ const BONUS = {
    ========================================================================== */
 
 const LEVELS = [
-  { name: 'First Hop',        kind: 'cross',  env: 'pond',
+  { name: 'First Hop',
+    blurb: 'two lanes, fat logs, nothing bites. a free win.',        kind: 'cross',  env: 'pond',
     speed: 0.62, roadLanes: 2, river: 'wide',   hazards: [] },
 
-  { name: 'Getting Busy',     kind: 'cross',  env: 'dusk',
+  { name: 'Getting Busy',
+    blurb: 'a third lane opens up, and a fly worth catching.',     kind: 'cross',  env: 'dusk',
     speed: 0.74, roadLanes: 3, river: 'wide',   hazards: ['fly'] },
 
-  { name: 'Monster Truck Rampage', kind: 'truck', env: 'city' },
+  { name: 'Monster Truck Rampage',
+    blurb: 'no rules. drive around flattening everything.', kind: 'truck', env: 'city' },
 
-  { name: 'Turtle Trouble',   kind: 'cross',  env: 'jungle',
+  { name: 'Turtle Trouble',
+    blurb: 'the turtles start diving. hop off before they sink.',   kind: 'cross',  env: 'jungle',
     speed: 0.86, roadLanes: 4, river: 'easy',   hazards: ['fly', 'diving'] },
 
-  { name: 'Rocket Ride',      kind: 'rocket', env: 'space' },
+  { name: 'Rocket Ride',
+    blurb: 'fly straight up through the traffic. dodge everything.',      kind: 'rocket', env: 'space' },
 
-  { name: 'Slippery Bank',    kind: 'cross',  env: 'arctic',
+  { name: 'Slippery Bank',
+    blurb: 'you cannot stop. steer the slide and hope.',    kind: 'cross',  env: 'arctic',
     speed: 0.90, roadLanes: 4, river: 'easy',   hazards: ['fly', 'diving'],
     rules: { ice: true } },
 
-  { name: 'Night Crossing',   kind: 'cross',  env: 'city',
+  { name: 'Night Crossing',
+    blurb: 'lights out. all you get is headlights and your own lamp.',   kind: 'cross',  env: 'city',
     speed: 1.00, roadLanes: 5, river: 'normal', hazards: ['fly', 'lady', 'diving'],
     rules: { dark: true } },
 
-  { name: 'Chopper Support',  kind: 'heli',   env: 'desert' },
+  { name: 'Chopper Support',
+    blurb: 'you have a machine gun. the traffic does not.',  kind: 'heli',   env: 'desert' },
 
-  { name: 'Snake Pit',        kind: 'cross',  env: 'jungle',
+  { name: 'Snake Pit',
+    blurb: 'snakes on the median. the safe row is not safe.',        kind: 'cross',  env: 'jungle',
     speed: 1.08, roadLanes: 5, river: 'normal',
     hazards: ['fly', 'lady', 'bayCroc', 'snake', 'diving'] },
 
-  { name: 'The Boneyard',     kind: 'cross',  env: 'boneyard',
+  { name: 'The Boneyard',
+    blurb: 'the world only moves when you do. stand still and they come.',     kind: 'cross',  env: 'boneyard',
     speed: 1.05, roadLanes: 5, river: 'normal', hazards: ['fly', 'diving'],
     rules: { ghost: true } },
 
-  { name: 'Croc Alley',       kind: 'cross',  env: 'desert',
+  { name: 'Croc Alley',
+    blurb: 'half the logs are crocodiles. ride the back, not the jaws.',       kind: 'cross',  env: 'desert',
     speed: 1.16, roadLanes: 5, river: 'normal',
     hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'] },
 
-  { name: 'Rampage II',       kind: 'truck',  env: 'dusk' },
+  { name: 'Rampage II',
+    blurb: 'the truck is back, and everything is quicker.',       kind: 'truck',  env: 'dusk' },
 
-  { name: 'Deep Freeze',      kind: 'cross',  env: 'arctic',
+  { name: 'Deep Freeze',
+    blurb: 'ice, crocodiles and snakes, all at once.',      kind: 'cross',  env: 'arctic',
     speed: 1.26, roadLanes: 5, river: 'tight',
     hazards: ['fly', 'bayCroc', 'snake', 'gator', 'diving'],
     rules: { ice: true } },
 
-  { name: 'Orbital Traffic',  kind: 'cross',  env: 'space',
+  { name: 'Orbital Traffic',
+    blurb: 'no air, no mercy. the tightest river yet.',  kind: 'cross',  env: 'space',
     speed: 1.34, roadLanes: 5, river: 'tight',
     hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'] },
 
-  { name: 'Blackout',         kind: 'cross',  env: 'boneyard',
+  { name: 'Blackout',
+    blurb: 'dark, and everything is fast. good luck.',         kind: 'cross',  env: 'boneyard',
     speed: 1.40, roadLanes: 5, river: 'tight',
     hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'],
     rules: { dark: true } },
 
-  { name: 'Rocket Ride II',   kind: 'rocket', env: 'space' },
+  { name: 'Rocket Ride II',
+    blurb: 'same rocket, angrier sky.',   kind: 'rocket', env: 'space' },
 
-  { name: 'Speedboat Boss Run', kind: 'boat', env: 'city' },
+  { name: 'Speedboat Boss Run',
+    blurb: 'first person. flat out down the river.', kind: 'boat', env: 'city' },
 ];
 
 /* ==========================================================================
@@ -295,13 +312,20 @@ const MUSIC = {
 
 const ROCKET = {
   attempts: 3,        /* how many rockets you get */
-  climb: 300,         /* how fast it flies up, pixels a second */
-  steer: 170,         /* how hard you can push it sideways in flight */
-  wind: 90,           /* how hard the crosswind shoves, pixels a second */
+  climb: 235,         /* how fast it flies up, pixels a second */
+  steer: 260,         /* how hard you can push it sideways in flight */
+  wind: 80,           /* how hard the crosswind shoves, pixels a second */
   windTurns: 0.7,     /* how often the wind changes its mind, per second */
   introTime: 2.6,
   resultsTime: 3.0,
   points: 500,        /* per rocket landed */
+
+  /* The first version was just aim-and-hope, which is dull. Now the rocket
+     flies up through the traffic and the river, so it is a dodge the whole
+     way, and there are stars on the route worth going out of your way for. */
+  hitbox: 0.44,       /* how much of a square actually counts as a hit */
+  starsPerFlight: 5,
+  starPoints: 150,
 };
 
 const HELI = {
@@ -322,18 +346,32 @@ const HELI = {
    -------------------------------------------------------------------------- */
 
 const TWISTS = {
-  /* ice: the frog carries on one more square after it lands. */
-  slideDelay: 0.11,   /* seconds between the hop and the slide */
+  /* ice: you cannot stop.
+
+     Two earlier goes at this were both too polite: an extra square after each
+     hop, then only sideways. Neither felt like ice. What ice should feel like
+     is committing. So: the moment you leave solid ground you keep sliding
+     forward on your own, and all you get to do is steer left and right until
+     you reach the median. Then you do it again across the river. */
+  iceStep: 0.62,      /* seconds between one forced slide forward and the next */
+  iceFirstStep: 0.5,  /* a slightly longer breath before the first one */
 
   /* dark: you only see a circle around the frog, plus car headlights. */
   darkness: 0.87,     /* how black the rest of the board goes */
   lampRadius: 2.6,    /* how far you can see, in squares */
   headlampReach: 3.4, /* how far a car's headlights throw */
 
-  /* ghost: the world only moves when you do, like a Mario ghost house. */
-  ghostPerHop: 0.5,   /* seconds of world time each hop buys you */
-  ghostDrift: 0.12,   /* and a slow trickle so it is never fully frozen */
-  ghostCount: 4,      /* how many ghosts drift about for atmosphere */
+  /* ghost: the world only moves when you do, like a Mario ghost house.
+
+     The first version left a slow trickle running and banked half a second a
+     hop, which added up to something almost indistinguishable from a normal
+     level. Now it stops dead, and the ghosts are the reason you cannot just
+     stand there and think about it. */
+  ghostPerHop: 0.34,  /* seconds of world time each hop buys you */
+  ghostDrift: 0.0,    /* nothing moves at all in between */
+  ghostCount: 4,
+  ghostSpeed: 62,     /* how fast a ghost closes in while the world is frozen */
+  ghostRetreat: 130,  /* and how fast it backs off once you move */
 };
 
 
@@ -450,6 +488,43 @@ const ENVIRONMENTS = {
     music: 'Boneyard',
     fog: true,
   },
+};
+
+
+/* ==========================================================================
+   1h. CREDITS  ::  who made it
+   --------------------------------------------------------------------------
+   Shown on the victory screen, which rolls once you finish the last level in
+   the plan. Same shape as the Phoenix 89 credits. Edit away.
+   ========================================================================== */
+
+const CREDITS = [
+  { text: 'FROGGER',                    size: 0.80, gap: 0.50, color: 'accent' },
+  { text: 'CONGRATULATIONS',            size: 0.38, gap: 0.22, color: 'text' },
+  { text: 'you got them all home',      size: 0.28, gap: 0.70, color: 'textDim' },
+
+  { text: 'CREATED BY',                 size: 0.24, gap: 0.20, color: 'textDim' },
+  { text: 'Will Stackable',             size: 0.44, gap: 0.70, color: 'text' },
+
+  { text: 'CREATIVE DIRECTORS',         size: 0.24, gap: 0.20, color: 'textDim' },
+  { text: 'Kelli Stackable',            size: 0.36, gap: 0.20, color: 'accent', sprite: 'frog' },
+  { text: 'Brady Stackable',            size: 0.36, gap: 0.70, color: 'accent', sprite: 'lady' },
+
+  { text: 'INSPIRED BY',                size: 0.24, gap: 0.20, color: 'textDim' },
+  { text: 'Frogger',                    size: 0.36, gap: 0.12, color: 'text' },
+  { text: 'Konami, 1981',               size: 0.28, gap: 0.70, color: 'textDim' },
+
+  { text: 'BUILT WITH',                 size: 0.24, gap: 0.20, color: 'textDim' },
+  { text: 'Claude Code',                size: 0.36, gap: 0.70, color: 'text' },
+
+  { text: 'Thanks for playing',         size: 0.40, gap: 0.30, color: 'accent' },
+  { text: '', size: 0.28, gap: 1.60, color: 'textDim' },
+];
+
+const VICTORY = {
+  celebrateTime: 5.0,   /* fireworks and a pulsing VICTORY before the credits */
+  scrollSpeed: 34,      /* how fast the credits crawl, pixels a second */
+  fireworkEvery: 0.34,
 };
 
 
@@ -617,6 +692,11 @@ const THEMES = {
       splat:   { draw: 'pixels', sprite: 'splat' },
 
       monsterTruck: { draw: 'pixels', sprite: 'monsterTruck' },
+      helicopter:   { draw: 'pixels', sprite: 'helicopter' },
+      rocket:       { draw: 'pixels', sprite: 'rocket' },
+      bullet:       { draw: 'pixels', sprite: 'bullet' },
+      ghost:        { draw: 'pixels', sprite: 'ghost' },
+      gravestone:   { draw: 'pixels', sprite: 'gravestone' },
       boat:    { draw: 'pixels', sprite: 'boat', fit: 'repeat' },
 
       log:     { draw: 'pixels', sprite: 'logMid', fit: 'repeat',
@@ -665,6 +745,11 @@ const THEMES = {
       splat:   { draw: 'emoji', glyph: '💥' },
 
       monsterTruck: { draw: 'emoji', glyph: '🛻', scale: 0.95 },
+      helicopter:   { draw: 'emoji', glyph: '🚁', scale: 0.95 },
+      rocket:       { draw: 'emoji', glyph: '🚀', scale: 0.95 },
+      bullet:       { draw: 'emoji', glyph: '✨', scale: 0.8 },
+      ghost:        { draw: 'emoji', glyph: '👻' },
+      gravestone:   { draw: 'emoji', glyph: '🪦' },
       boat:    { draw: 'emoji', glyph: '⛵', fit: 'repeat' },
 
       log:     { draw: 'emoji', glyph: '🪵', fit: 'repeat' },

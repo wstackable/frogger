@@ -158,11 +158,48 @@ function survivable(row, x, hold) {
   }
 }
 
+/* On an ice level the frog is going to be shoved forward whether it likes it
+   or not, so "should I go up?" is the wrong question. The only question is
+   whether the square it is about to be shoved into is safe, and if not, which
+   way to step to fix that. Without this the bot cannot play an ice level at
+   all, and cannot tell a hard one from an impossible one. */
+function decideOnIce() {
+  const frog = game.frog;
+  const row = frog.row;
+  const col = Math.round(frog.x / GRID);
+  const target = row - 1;
+
+  /* Roughly how long until the ice moves us, in frames. */
+  const untilShove = Math.max(0, (frog.iceNext || 0) - game.time) * 60;
+  const hold = Math.max(6, Math.round(untilShove) + 10);
+
+  if (survivable(target, frog.x, hold)) return [0, 0];   /* lined up already */
+
+  for (const dx of [-1, 1, -2, 2]) {
+    const nx = (col + dx) * GRID;
+    if (nx < 0 || nx > MAX_X) continue;
+    /* The step across has to be survivable too, not just the destination. */
+    if (survivable(row, nx, 6) && survivable(target, nx, hold)) {
+      return [Math.sign(dx), 0];
+    }
+  }
+
+  /* Nothing above works. Take any sideways move that at least keeps us alive. */
+  for (const dx of [-1, 1]) {
+    const nx = (col + dx) * GRID;
+    if (nx >= 0 && nx <= MAX_X && survivable(row, nx, 10)) return [dx, 0];
+  }
+  return [0, 0];
+}
+
 function decide() {
   const frog = game.frog;
   const row = frog.row;
   const col = Math.round(frog.x / GRID);
   const rushing = game.timeLeft < 8;
+
+  /* Ice takes the forward decision away, so it needs its own policy. */
+  if (api.twist("ice") && !api.onSolidGround()) return decideOnIce();
 
   /* How long we insist a square stays safe. When the clock is nearly out,
      take more risk, exactly like a real player. */

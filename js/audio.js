@@ -208,7 +208,10 @@ const Engine = {
     const cut = ctx.createBiquadFilter();
     cut.type = 'lowpass';
     cut.frequency.value = this.p.idleCut;
-    cut.Q.value = 6;
+    /* Keep this low. At Q 6 the resonant peak landed on the idle's seventh
+       harmonic and boosted it so hard that tickover measured LOUDER than full
+       throttle, which is both wrong and honky. */
+    cut.Q.value = 1.1;
     cut.connect(out);
 
     const amp = ctx.createGain();

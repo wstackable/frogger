@@ -770,16 +770,50 @@ check("the frog does not hop during the bonus round", (() => {
   return api.bonus.x === before.x && api.bonus.y === before.y;
 })());
 
-console.log("\n== the boat and truck art exist ==");
-for (const kind of ["monsterTruck", "boat"]) {
-  for (const themeName of Object.keys(api.THEMES)) {
-    const a = api.THEMES[themeName].art[kind];
-    check(`the ${themeName} theme has ${kind}`, !!a, `missing`);
-    if (a && a.draw === "pixels") {
-      check(`  and its sprite exists`, !!api.SPRITES[a.sprite], a.sprite);
+console.log("\n== every picture the engine asks for actually exists ==");
+/* Read the engine and pull out every Art.of('...') it uses, rather than
+   listing them here by hand. Adding a sprite but forgetting to map it in the
+   themes made the helicopter, its bullets, the rocket and the ghosts all
+   invisible, and a hand-written list would not have caught it. */
+const engineSrc = await Deno.readTextFile(
+  new URL("../js/game.js", import.meta.url).pathname);
+const literals = [...engineSrc.matchAll(/Art\.of\(\s*'([A-Za-z]+)'\s*\)/g)].map(m => m[1]);
+/* Plus the ones reached through a variable: every lane's kind, and the
+   crocodile variant a log can turn into. */
+const laneKinds = api.LEVELS.length ? lanes.map(l => l.kind).filter(Boolean) : [];
+const askedFor = [...new Set([...literals, ...laneKinds, "gator", "boat"])].sort();
+
+check("the engine asks for a decent number of pictures", askedFor.length >= 20,
+  `${askedFor.length}: ${askedFor.join(", ")}`);
+
+for (const themeName of Object.keys(api.THEMES)) {
+  const art = api.THEMES[themeName].art || {};
+  const missing = askedFor.filter(k => !art[k]);
+  check(`the ${themeName} theme has art for all ${askedFor.length} of them`,
+    missing.length === 0, `missing: ${missing.join(", ")}`);
+
+  const brokenSprite = askedFor
+    .filter(k => art[k] && art[k].draw === "pixels" && !api.SPRITES[art[k].sprite])
+    .map(k => `${k} -> ${art[k].sprite}`);
+  check(`  and every one points at a real sprite`, brokenSprite.length === 0,
+    brokenSprite.join(", "));
+}
+
+check("no sprite in sprites.js is left unused", (() => {
+  const used = new Set();
+  for (const t of Object.values(api.THEMES)) {
+    for (const a of Object.values(t.art || {})) if (a.sprite) used.add(a.sprite);
+    for (const a of Object.values(t.art || {})) {
+      if (a.capLeft) used.add(a.capLeft);
+      if (a.capRight) used.add(a.capRight);
     }
   }
-}
+  for (const e of Object.values(api.ENVIRONMENTS)) {
+    for (const sp of Object.values(e.art || {})) used.add(sp);
+  }
+  const orphans = Object.keys(api.SPRITES).filter(n => !used.has(n));
+  return orphans.length === 0 ? true : orphans.join(", ");
+})() === true, "unused sprites are dead weight");
 
 
 /* ==========================================================================
@@ -1099,42 +1133,51 @@ check("the plan has an ice level", iceLevel > 0);
 check("the plan has a dark level", darkLevel > 0);
 check("the plan has a ghost level", ghostLevel > 0);
 
-check("ice makes the frog carry on one more square", (() => {
+check("standing on the start line, nothing slides", (() => {
   api.startGame(iceLevel);
   frames(1);
-  game.frog.row = 12;                 /* the start row, nothing can kill us */
+  game.frog.row = 12;                    /* the start line is solid ground */
   game.frog.x = 6 * GRID;
-  const from = game.frog.x;
-  key("ArrowRight");
-  const afterHop = game.frog.x;
-  for (let i = 0; i < 30; i++) frames(1);   /* let the slide happen */
-  const afterSlide = game.frog.x;
-  return afterHop === from + GRID && afterSlide === from + GRID * 2;
-})(), `x moved to ${game.frog && game.frog.x}`);
+  const row = game.frog.row;
+  for (let i = 0; i < 90; i++) frames(1);
+  return game.frog.row === row && api.onSolidGround();
+})(), "should be able to stand still on solid ground");
 
-check("ice does NOT slide you an extra row", (() => {
-  /* This is the one that made the late ice level unplayable: sliding forwards
-     meant you could never stop on a road lane. */
+check("stepping off the start line commits you to sliding forward", (() => {
   api.startGame(iceLevel);
   frames(1);
   game.frog.row = 12;
   game.frog.x = 6 * GRID;
-  const fromRow = game.frog.row;
-  key("ArrowUp");
-  const afterHop = game.frog.row;
-  for (let i = 0; i < 30; i++) frames(1);
-  return afterHop === fromRow - 1 && game.frog.row === afterHop;
-})(), `row ended at ${game.frog && game.frog.row}`);
+  game.timeLeft = 1e9;
+  key("ArrowUp");                        /* one deliberate step */
+  const after = game.frog.row;
+  /* Now do nothing at all. The ice should keep carrying us. */
+  for (let i = 0; i < 120 && game.state === "play"; i++) frames(1);
+  return game.state !== "play" || game.frog.row < after;
+})(), "the slide should carry the frog on by itself");
 
-check("a level without ice does not slide", (() => {
+check("the median stops the slide, which is what makes it matter", (() => {
+  api.startGame(iceLevel);
+  frames(1);
+  const median = lanes.find(l => l.background === "median" || l.type === "safe");
+  game.frog.row = median.row;
+  game.frog.x = 6 * GRID;
+  game.timeLeft = 1e9;
+  game.frog.iceNext = 0;
+  const row = game.frog.row;
+  for (let i = 0; i < 120; i++) frames(1);
+  return game.frog.row === row && api.onSolidGround();
+})(), "should be able to stop on the median");
+
+check("a level without ice never slides on its own", (() => {
   api.startGame(firstCross);
   frames(1);
-  game.frog.row = 12;
+  game.frog.row = 11;                    /* out on the road, not solid ground */
   game.frog.x = 6 * GRID;
-  const from = game.frog.x;
-  key("ArrowRight");
-  for (let i = 0; i < 30; i++) frames(1);
-  return game.frog.x === from + GRID;
+  game.timeLeft = 1e9;
+  const row = game.frog.row;
+  for (let i = 0; i < 90 && game.state === "play"; i++) frames(1);
+  return game.state !== "play" || game.frog.row === row;
 })());
 
 check("the boneyard freezes the world until you move", (() => {
