@@ -46,16 +46,30 @@ patterns, and the flies, crocodiles and lady frog come from a seeded generator
 keyed to the level number. Level 3 plays the same way every time, so getting
 better is actually possible. That was most of the appeal of the cabinet.
 
+**It tells you why you died.** The arcade never explained itself, but the
+arcade also had a queue of people watching over your shoulder. One line under
+the splat is enough to teach the rule that catches everybody: on the river you
+have to be standing on something.
+
+**A radio and a colour switcher**, same controls as Phoenix 89. **R** changes
+track, **M** mutes, **C** cycles the colour palette. The music is chiptune
+generated live in the browser, so there is nothing to download, and the tunes
+are written out as text you can edit. Two of them, *Yankee Doodle* and
+*Camptown Races*, are tunes the actual cabinet played.
+
 Plus lives, a 30 second timer, a high score that sticks, pause, keyboard,
-swipe, on-screen buttons on phones, and sound with no audio files.
+swipe, on-screen buttons on phones, and sound effects with no audio files.
 
 ## Playing
 
 | | |
 |---|---|
 | Move | Arrow keys, WASD, or swipe |
-| Start / pause | Space, Enter, or tap |
-| Restart | R |
+| Start / pause | Space, Enter, or tap. **P** also pauses |
+| New game | **N** |
+| Change music | **R**, or the ♪ button |
+| Mute music | **M**, or the 🔊 button |
+| Change colours | **C**, or the 🎨 button |
 
 One piece of real strategy, straight from the arcade: **fill the lilypads from
 left to right.** The top log row flows left to right and its gaps are wider
@@ -65,10 +79,11 @@ and the last one left is the easy one.
 ## The files
 
 ```
-index.html          the page. loads the five scripts in order.
+index.html          the page. loads the six scripts in order.
 css/style.css       the page around the game (the game itself is a canvas)
-js/config.js    ←   START HERE. rules, board layout, difficulty, themes.
+js/config.js    ←   START HERE. rules, board, difficulty, themes, palettes.
 js/sprites.js   ←   THE PIXEL ART. every picture, drawn as letters.
+js/music.js     ←   THE TUNES. written out as notes you can edit.
 js/render.js        turns art settings into pixels
 js/audio.js         the beeps, generated in code
 js/game.js          the engine: rules, collisions, scoring, the game loop
@@ -76,9 +91,9 @@ assets/             put your own drawings here
 tests/              three suites. worth running. see below.
 ```
 
-Everything you would want to change is in **`js/config.js`** and
-**`js/sprites.js`**, and both are heavily commented. The engine reads their
-values and hardcodes nothing.
+Everything you would want to change is in **`js/config.js`**,
+**`js/sprites.js`** and **`js/music.js`**, and all three are heavily
+commented. The engine reads their values and hardcodes nothing.
 
 ## Customising it
 
@@ -101,6 +116,24 @@ frog: [
 ```js
 theme: 'arcade',    // the 1981 pixel look
 theme: 'emoji',     // 🐸 🪵 🐢 🚗, for when the kids want silly
+```
+
+**Or add a colour palette to the C rotation.** Sunset Highway, Game Boy, Neon
+Night, Ice World and Candy ship with it; a new one is a block of hex codes.
+
+```js
+{ name: 'Game Boy',
+  bg:     { water: '#0f380f', road: '#081808', grass: '#8bac0f' },
+  pixels: { G: '#9bbc0f', R: '#8bac0f', B: '#306230' } },
+```
+
+**Or write your own music.** One note per beat, `-` holds, `.` rests.
+
+```js
+{ name: 'Hop To It', bpm: 132,
+  lead: 'e5 .  g5 .  a5 -  g5 e5',
+  bass: 'a2 -  a3 -  a2 -  a3 -',
+  drum: 'x  .  h  .  x  .  h  h' },
 ```
 
 **Or drop in your own drawings.** Draw a frog on paper, photograph it, save a
@@ -170,13 +203,18 @@ row always has somewhere dry to stand.
 
 The lane and pattern system started from
 [straker's Basic Frogger](https://gist.github.com/straker/82a4368849cbd441b05bd6a044f2b2d3),
-released under CC0. Everything else, including all of the pixel art, was
-written for this project. The behaviour was matched against
+released under CC0. Everything else, including all of the pixel art and the
+music, was written for this project. The behaviour was matched against
 [Wikipedia's description of the arcade game](https://en.wikipedia.org/wiki/Frogger)
 and [Prime Time Amusements' strategy guide](https://primetimeamusements.com/getting-good-frogger/).
 
-Two things from the original are deliberately missing: **otters**, which tip
-one end of a log into the water, and **two-player alternating mode**.
+Three things from the original are deliberately missing. **Otters**, which tip
+one end of a log into the water. **Two-player alternating mode**. And most of
+the soundtrack: Konami's medley was built from existing tunes, and while
+*Yankee Doodle* and *Camptown Races* are out of copyright and are included, the
+famous opening jingle (*Inu no Omawarisan*, Yoshimi Sato, 1960) and the main
+theme (the opening of the anime *Araiguma Rascal*) are not, so they are not
+here. The home ports had to replace them for exactly the same reason.
 
 Frogger is a trademark of Konami. This is a hobby reimplementation for
 learning, not affiliated with or endorsed by them, and none of the artwork is

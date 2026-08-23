@@ -34,7 +34,8 @@ const CONFIG = {
   timeLimit: 30,     /* seconds to get one frog home */
   hopDuration: 80,   /* ms of hop animation. 0 = instant snap. */
 
-  sound: true,
+  sound: true,             /* the beeps and boops */
+  music: true,             /* the chiptune radio. R changes track, M mutes. */
   touchControls: 'auto',   /* true | false | 'auto' (show on touchscreens) */
 
   /* Which columns have a lilypad. Five bays across 13 columns. */
@@ -157,11 +158,11 @@ const LANES = [
 
   /* --- The river. Five rows. The top row of logs runs left to right, which
          is why the leftmost lilypad is the hardest to reach. ------------- */
-  { type: 'river', kind: 'log',    length: 3, spacing: [3], speed:  0.80, gator: true },
+  { type: 'river', kind: 'log',    length: 4, spacing: [3], speed:  0.80, gator: true },
   { type: 'river', kind: 'turtle', length: 3, spacing: [2], speed: -1.00, dive: 'alternate' },
   { type: 'river', kind: 'log',    length: 6, spacing: [3], speed:  1.40, gator: true },
   { type: 'river', kind: 'log',    length: 3, spacing: [3], speed:  0.60, lady: true },
-  { type: 'river', kind: 'turtle', length: 2, spacing: [2], speed: -0.90, dive: 'alternate' },
+  { type: 'river', kind: 'turtle', length: 3, spacing: [2], speed: -0.90, dive: 'alternate' },
 
   /* --- The median. Safe until level 3, when the snakes turn up. ---------- */
   { type: 'road',  kind: 'snake',  length: 2, spacing: [9], speed: -0.45,
@@ -303,3 +304,92 @@ const THEMES = {
     },
   },
 };
+
+
+/* ==========================================================================
+   5. PALETTES  ::  colour schemes you can flip through while playing
+   --------------------------------------------------------------------------
+   Press C in the game to cycle these. The first one is the real cabinet, so
+   leave it alone if you want the authentic look to stay one keypress away.
+
+   Each palette can change two things:
+
+     bg      the flat background bands (water, road, grass, median)
+     pixels  the colours the pixel art letters stand for, from sprites.js
+             so { G: '#ff00ff' } turns everything drawn with G bright pink
+
+   Leave either out and that half stays as it was. Copy a block, give it a
+   name, and it joins the rotation.
+   ========================================================================== */
+
+const PALETTES = [
+
+  /* The 1981 cabinet. No overrides: this is what sprites.js already says. */
+  { name: 'Arcade 1981' },
+
+  {
+    name: 'Sunset Highway',
+    bg: { water: '#3a1060', road: '#20101c', grass: '#c85018',
+          median: '#f08030', bankLine: '#f8c060', bayInner: '#180828',
+          textDim: '#ffb870', timeBar: '#f8c060', timeLow: '#ff4040' },
+    pixels: { G: '#ffd040', g: '#e08820', d: '#804010',
+              B: '#8a4a20', b: '#502810', n: '#c07840',
+              R: '#ff5020', r: '#a02810',
+              J: '#a06030', j: '#503018' },
+  },
+
+  {
+    name: 'Game Boy',
+    bg: { water: '#0f380f', road: '#081808', grass: '#8bac0f',
+          median: '#306230', bankLine: '#9bbc0f', bayInner: '#081808',
+          hudBg: '#081808', text: '#9bbc0f', textDim: '#8bac0f',
+          accent: '#9bbc0f', timeBar: '#8bac0f', timeLow: '#306230' },
+    pixels: { G: '#9bbc0f', g: '#8bac0f', d: '#306230',
+              W: '#9bbc0f', w: '#8bac0f', s: '#306230', K: '#081808',
+              C: '#306230', Y: '#9bbc0f', O: '#8bac0f',
+              R: '#8bac0f', r: '#306230', P: '#9bbc0f', p: '#306230',
+              B: '#8bac0f', b: '#306230', n: '#9bbc0f',
+              y: '#9bbc0f', J: '#8bac0f', j: '#306230' },
+  },
+
+  {
+    name: 'Neon Night',
+    bg: { water: '#100038', road: '#08000c', grass: '#00c0a0',
+          median: '#ff00a0', bankLine: '#00ffd0', bayInner: '#080020',
+          textDim: '#00e0ff', accent: '#ffee00',
+          timeBar: '#00ffd0', timeLow: '#ff0060' },
+    pixels: { G: '#00ff90', g: '#00c070', d: '#006040',
+              R: '#ff0060', r: '#a00040', O: '#ff40a0',
+              Y: '#ffee00', C: '#00e0ff',
+              B: '#8060ff', b: '#4030a0', n: '#a890ff',
+              P: '#ff40ff', p: '#a000a0',
+              y: '#c0ff00', J: '#00d0c0', j: '#00706a' },
+  },
+
+  {
+    name: 'Ice World',
+    bg: { water: '#183050', road: '#0c1420', grass: '#e8f4ff',
+          median: '#6090d0', bankLine: '#ffffff', bayInner: '#0c2038',
+          text: '#ffffff', textDim: '#a0d0f0',
+          timeBar: '#80d0ff', timeLow: '#ff8080' },
+    pixels: { G: '#80e8ff', g: '#40a8d0', d: '#205070',
+              R: '#ff9060', r: '#a04020',
+              B: '#90a8c0', b: '#506880', n: '#c0d8e8',
+              J: '#70b0a0', j: '#305850',
+              y: '#c8f0ff' },
+  },
+
+  {
+    name: 'Candy',
+    bg: { water: '#ff9ec7', road: '#4a2040', grass: '#8ce68c',
+          median: '#ffe066', bankLine: '#ffffff', bayInner: '#c0508c',
+          textDim: '#ffd0e8', accent: '#fff0a0',
+          timeBar: '#8ce68c', timeLow: '#ff5088' },
+    pixels: { G: '#66e0a0', g: '#40b878', d: '#207850',
+              R: '#ff6090', r: '#c03060', O: '#ffb0c0',
+              Y: '#ffe066', C: '#a0e8ff',
+              B: '#d09060', b: '#906038', n: '#f0c090',
+              P: '#ff80d0', p: '#c04090',
+              J: '#a0d860', j: '#508020' },
+  },
+];

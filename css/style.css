@@ -74,3 +74,36 @@ canvas {
   background: #2f2f40;
   transform: translateY(1px);
 }
+
+
+/* --------------------------------------------------------------------------
+   Radio and colour buttons. Always visible, on any device: changing the
+   music or the colours is half the fun and should not need a keyboard.
+   -------------------------------------------------------------------------- */
+
+#extras {
+  display: flex;
+  gap: 10px;
+}
+
+#extras button {
+  width: 46px;
+  height: 38px;
+  font-size: 17px;
+  line-height: 1;
+  color: #dfe3ea;
+  background: #1c1c26;
+  border: 2px solid #2f2f40;
+  border-radius: 9px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#extras button:active {
+  background: #2f2f40;
+  transform: translateY(1px);
+}
+
+#extras button.off {
+  color: #6b6b7a;
+}

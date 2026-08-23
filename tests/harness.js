@@ -13,7 +13,8 @@ import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 const ROOT = join(dirname(fromFileUrl(import.meta.url)), "..");
 
 export async function load() {
-  const files = ["js/config.js", "js/sprites.js", "js/render.js", "js/audio.js", "js/game.js"];
+  const files = ["js/config.js", "js/sprites.js", "js/render.js", "js/audio.js",
+                 "js/music.js", "js/game.js"];
   let src = "";
   for (const f of files) src += await Deno.readTextFile(`${ROOT}/${f}`) + "\n";
 
@@ -41,10 +42,77 @@ export async function load() {
     };
   }
   const canvas = makeCanvas();
-  const pad = { hidden: true, addEventListener: addEL("pad") };
+  /* A stand-in for the radio / palette / d-pad buttons. */
+  function makeEl() {
+    return {
+      hidden: true,
+      textContent: "",
+      classList: { toggle() {}, add() {}, remove() {} },
+      addEventListener: addEL("el"),
+      style: {},
+    };
+  }
+  const pad = makeEl();
 
   const rafQueue = [];
   const store = new Map();
+
+  /* ------------------------------------------------------------------------
+     A fake AudioContext.
+
+     Real browsers will not advance an audio clock without an output device
+     (headless Chrome reports state "running" but currentTime stays at 0
+     forever), so music timing cannot be tested in a browser at all. Here the
+     clock is ours to move, and every note that gets scheduled is written down,
+     which makes the scheduler fully checkable.
+     ---------------------------------------------------------------------- */
+  const scheduled = [];
+
+  function param(initial) {
+    return {
+      value: initial,
+      setValueAtTime() { return this; },
+      linearRampToValueAtTime() { return this; },
+      exponentialRampToValueAtTime() { return this; },
+    };
+  }
+  const node = () => ({ connect(dest) { return dest; }, disconnect() {} });
+
+  class FakeAudioContext {
+    constructor() {
+      this.state = "running";
+      this.sampleRate = 48000;
+      this.currentTime = 0;
+      this.destination = node();
+    }
+    resume() { this.state = "running"; }
+    createGain() { return { ...node(), gain: param(1) }; }
+    createOscillator() {
+      const osc = {
+        ...node(),
+        type: "sine",
+        frequency: param(440),
+        start(when) { scheduled.push({ kind: "osc", freq: osc.frequency.value, when, type: osc.type }); },
+        stop() {},
+      };
+      /* Record the pitch whichever way it is set. */
+      osc.frequency.setValueAtTime = (v) => { osc.frequency.value = v; return osc.frequency; };
+      return osc;
+    }
+    createBuffer(ch, len) {
+      return { length: len, getChannelData: () => new Float32Array(len) };
+    }
+    createBufferSource() {
+      const src = {
+        ...node(), buffer: null, loop: false,
+        start(when) { scheduled.push({ kind: "noise", when }); },
+        stop() {},
+      };
+      return src;
+    }
+    createBiquadFilter() { return { ...node(), type: "highpass", frequency: param(1000) }; }
+  }
+
 
   const win = {
     devicePixelRatio: 1,
@@ -56,8 +124,8 @@ export async function load() {
       getItem: (k) => (store.has(k) ? store.get(k) : null),
       setItem: (k, v) => store.set(k, v),
     },
-    AudioContext: undefined,
-    webkitAudioContext: undefined,
+    AudioContext: FakeAudioContext,
+    webkitAudioContext: FakeAudioContext,
     console,
     Image: class { constructor() { this.complete = false; this.naturalWidth = 0; } addEventListener() {} },
     Math, Date, Number, String, Object, Array, JSON, Boolean, isNaN, parseInt, parseFloat,
@@ -66,14 +134,14 @@ export async function load() {
 
   const fn = new Function(
     "window", "document", "requestAnimationFrame", "localStorage",
-    "Image", "console", "performance",
+    "Image", "console", "performance", "setInterval", "clearInterval",
     src + "\nreturn window.frogger;"
   );
 
   const api = fn(
     win,
     {
-      getElementById: (id) => (id === "game" ? canvas : pad),
+      getElementById: (id) => (id === "game" ? canvas : makeEl()),
       createElement: (tag) => (tag === "canvas" ? makeCanvas() : {}),
     },
     win.requestAnimationFrame,
@@ -81,6 +149,8 @@ export async function load() {
     win.Image,
     console,
     performance,
+    () => 0,          /* setInterval: the music scheduler stays inert in tests */
+    () => {},         /* clearInterval */
   );
 
   // Drive frames manually.
@@ -96,5 +166,16 @@ export async function load() {
     for (const l of listeners.keydown || []) l.fn({ key: k, preventDefault: noop });
   }
 
-  return { api, tick, frames, key, listeners, canvas, store };
+  /* Move the audio clock forward and let the music scheduler catch up. */
+  function advanceAudio(seconds) {
+    const ctx = api.Music && api.Music._ctx;
+    if (!ctx) return;
+    ctx.currentTime += seconds;
+    api.Music.pump();
+  }
+
+  return {
+    api, tick, frames, key, listeners, canvas, store,
+    audio: { scheduled, advanceAudio, reset: () => { scheduled.length = 0; } },
+  };
 }

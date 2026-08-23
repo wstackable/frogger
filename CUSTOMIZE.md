@@ -2,10 +2,11 @@
 
 A list of things to change, easiest first.
 
-Two files matter:
+Three files matter:
 
-- **`js/config.js`** is the rules, the board and the difficulty
+- **`js/config.js`** is the rules, the board, the difficulty and the palettes
 - **`js/sprites.js`** is all the pixel art
+- **`js/music.js`** is all the tunes
 
 The loop for everything here is the same:
 
@@ -100,6 +101,61 @@ On a Mac, **Ctrl + Cmd + Space** opens the emoji picker.
 
 To make a brand new theme, copy either block in `THEMES`, give it a new name,
 and set `theme:` to that name.
+
+## Level 3b: write your own tune
+
+Open **`js/music.js`**. Every tune is written out as text, one note per beat.
+
+```js
+{
+  name: 'Hop To It',
+  bpm: 132,                              // how fast. 100 slow, 170 frantic.
+  lead: 'e5 .  g5 .  a5 -  g5 e5',       // the melody
+  bass: 'a2 -  a3 -  a2 -  a3 -',        // the low part
+  drum: 'x  .  h  .  x  .  h  h',        // x kick, h hi-hat, s snare
+},
+```
+
+- a note is a letter, an optional `#`, and an octave: `c4`, `f#3`, `a5`
+- `-` holds the note before it for another beat
+- `.` is silence
+- bigger octave number, higher note. `c4` is middle C.
+
+Press **R** in the game to skip to the next track, so you can jump straight to
+the one you are working on. Press **M** to mute.
+
+**A trick that always works:** pick five notes and only use those. `c d e g a`
+in any order sounds cheerful. `a c d e g` sounds a bit spooky. You genuinely
+cannot play a wrong note.
+
+Two of the tunes, *Yankee Doodle* and *Camptown Races*, are ones the real
+arcade machine played. The famous Frogger jingle is a Japanese children's song
+that is still in copyright, which is why it is not in here.
+
+## Level 3c: add a colour palette
+
+Press **C** in the game to flip through them. They live in `PALETTES` at the
+bottom of `js/config.js`.
+
+```js
+{
+  name: 'Game Boy',
+  bg: {                          // the flat background bands
+    water: '#0f380f', road: '#081808', grass: '#8bac0f', median: '#306230',
+  },
+  pixels: {                      // what the pixel art letters mean
+    G: '#9bbc0f',                // every G in sprites.js becomes this
+    R: '#8bac0f',
+    B: '#306230',
+  },
+},
+```
+
+Leave out `bg` and only the sprites change. Leave out `pixels` and only the
+backgrounds change. Copy a block, rename it, and it joins the C rotation.
+
+Ideas: a black-and-white one, a single-colour one, your football team's
+colours, one where everything is a shade of purple.
 
 ## Level 4: make it easier, or brutal
 
@@ -243,6 +299,8 @@ first tells you if you broke a rule. The second tells you if you broke the
 | Emoji shows as a box | Your device does not have that emoji. Pick another. |
 | Your PNG does not appear | Wrong filename or folder. The console says which file it could not load. Capital letters matter. |
 | The frog dies instantly | You probably gave the bottom row a `'road'` or `'river'` type. The last row should be `'start'`. |
+| No music | Click or press a key first: browsers will not play sound until you have touched the page. Then check `music: true` in config.js and that M has not muted it. |
+| A tune sounds wrong | A note name it did not understand is silently skipped. Check for typos like `h5` or `c` with no octave number. |
 | The river becomes impossible | Two river rows next to each other flowing the same way. See the note in Level 6. |
 
 Nothing you can type in `config.js` or `sprites.js` can break anything

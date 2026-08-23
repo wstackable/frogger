@@ -24,6 +24,13 @@
     </div>
   </div>
 
+  <!-- Radio and colours, the same controls as the R, M and C keys. -->
+  <div id="extras">
+    <button id="radioBtn"   aria-label="Next music track">♪</button>
+    <button id="muteBtn"    aria-label="Mute music">🔊</button>
+    <button id="paletteBtn" aria-label="Next colour palette">🎨</button>
+  </div>
+
   <!-- Load order matters: config, then the art layer, then the engine.
        Plain scripts (not modules) so index.html also works when you just
        double-click it, with no web server involved. -->
@@ -31,6 +38,7 @@
   <script src="js/sprites.js"></script>
   <script src="js/render.js"></script>
   <script src="js/audio.js"></script>
+  <script src="js/music.js"></script>
   <script src="js/game.js"></script>
 
 </body>

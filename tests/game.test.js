@@ -6,7 +6,7 @@ function check(name, cond, extra = "") {
   else { fail++; console.log(`  FAIL ${name} ${extra}`); }
 }
 
-const { api, tick, frames, key } = await load();
+const { api, tick, frames, key, audio } = await load();
 const { game, lanes, CONFIG, PROGRESSION, WIDTH } = api;
 const GRID = CONFIG.grid;
 
@@ -393,6 +393,196 @@ check("there are sprites for everything the arcade theme names",
     .every(a => SPRITES[a.sprite] &&
                 (!a.capLeft || SPRITES[a.capLeft]) &&
                 (!a.capRight || SPRITES[a.capRight])));
+
+
+/* ==========================================================================
+   The radio and the colour palettes
+   ========================================================================== */
+
+console.log("\n== the music is well formed ==");
+const { Music, Art, PALETTES } = api;
+
+check("there are tracks", Music.trackName().length > 0);
+
+let musicProblems = [];
+for (const t of api.TRACKS) {
+  if (!t.name) musicProblems.push("a track has no name");
+  if (!t.bpm || t.bpm < 40 || t.bpm > 300) musicProblems.push(`${t.name}: odd bpm ${t.bpm}`);
+  for (const voice of ["lead", "bass", "drum"]) {
+    const toks = String(t[voice] || "").trim().split(/\s+/).filter(Boolean);
+    if (!toks.length) { musicProblems.push(`${t.name}: empty ${voice}`); continue; }
+    for (const tok of toks) {
+      if (tok === "." || tok === "-") continue;
+      if (voice === "drum") {
+        if (!["x", "h", "s"].includes(tok)) musicProblems.push(`${t.name} drum: "${tok}"`);
+      } else if (!/^[a-g](#|b)?-?\d$/.test(tok)) {
+        musicProblems.push(`${t.name} ${voice}: "${tok}" is not a note`);
+      }
+    }
+    /* A pattern must not open with a hold, since there is nothing to hold. */
+    if (toks[0] === "-") musicProblems.push(`${t.name} ${voice} starts with a hold`);
+  }
+}
+check("every note, rest and drum hit is valid", musicProblems.length === 0,
+  musicProblems.slice(0, 6).join(" | "));
+
+check("R moves to the next track", (() => {
+  const first = Music.trackName();
+  Music.next();
+  const second = Music.trackName();
+  return api.TRACKS.length === 1 || first !== second;
+})());
+
+check("M toggles the music off and on again", (() => {
+  const before = Music.enabled;
+  Music.toggle();
+  const flipped = Music.enabled !== before;
+  Music.toggle();
+  return flipped && Music.enabled === before;
+})());
+
+console.log("\n== the colour palettes ==");
+check("there is more than one palette", PALETTES.length > 1, String(PALETTES.length));
+check("every palette has a name", PALETTES.every(p => typeof p.name === "string" && p.name));
+check("the first palette is the untouched cabinet look",
+  !PALETTES[0].bg && !PALETTES[0].pixels);
+
+const badColors = [];
+const HEX = /^#[0-9a-fA-F]{6}$/;
+for (const pal of PALETTES) {
+  for (const [k, v] of Object.entries(pal.bg || {})) {
+    if (!HEX.test(v)) badColors.push(`${pal.name} bg.${k}=${v}`);
+  }
+  for (const [k, v] of Object.entries(pal.pixels || {})) {
+    if (!HEX.test(v)) badColors.push(`${pal.name} pixels.${k}=${v}`);
+    if (!(k in api.PALETTE)) badColors.push(`${pal.name} overrides unknown letter "${k}"`);
+  }
+}
+check("every palette colour is a valid hex code and a known letter",
+  badColors.length === 0, badColors.slice(0, 6).join(" | "));
+
+check("C cycles through every palette and comes back round", (() => {
+  const seen = new Set();
+  for (let i = 0; i < PALETTES.length; i++) seen.add(Art.nextPalette());
+  const wrapped = Art.nextPalette();
+  return seen.size === PALETTES.length && seen.has(wrapped);
+})());
+
+check("switching palette actually changes a colour", (() => {
+  Art.setPalette(0);
+  const before = Art.color("water");
+  /* Find a palette that overrides the water colour. */
+  const i = PALETTES.findIndex(p => p.bg && p.bg.water);
+  if (i < 0) return true;
+  Art.setPalette(i);
+  const after = Art.color("water");
+  Art.setPalette(0);
+  return before !== after;
+})());
+
+check("a palette override changes what a pixel letter means", (() => {
+  Art.setPalette(0);
+  const before = Art.pixel("G");
+  const i = PALETTES.findIndex(p => p.pixels && p.pixels.G);
+  if (i < 0) return true;
+  Art.setPalette(i);
+  const after = Art.pixel("G");
+  Art.setPalette(0);
+  return before !== after && after === PALETTES[i].pixels.G;
+})());
+
+console.log("\n== the death banner ==");
+/* Every way of dying needs a hint, or the banner is the empty black box again. */
+const reasons = [
+  "Squashed", "Drowned", "The turtles dived", "Washed away", "Hit the bank",
+  "That lilypad is taken", "A crocodile was waiting", "Eaten by a crocodile",
+  "Bitten by a snake", "Out of time",
+];
+check("every death reason the engine can produce has a hint",
+  reasons.every(r => api.DEATH_HINTS[r]),
+  reasons.filter(r => !api.DEATH_HINTS[r]).join(", "));
+
+check("no overlay panel is shown while dying", (() => {
+  reset();
+  game.frog.row = 1;
+  lanes[1].obstacles.forEach(o => { o.x = -9999; });
+  frames(1);
+  return game.state === "dying" && api.overlayFor() === null;
+})());
+resetLanes();
+
+check("the title screen still gets an overlay", (() => {
+  game.state = "title";
+  game.paused = false;
+  return api.overlayFor() === "title";
+})());
+
+
+console.log("\n== the music scheduler really plays the tune ==");
+
+/* Yankee Doodle: c5 c5 d5 e5 c5 e5 d5 - ... */
+api.Music.enabled = true;
+CONFIG.music = true;
+api.Music.index = api.TRACKS.findIndex(t => t.name === "Yankee Doodle");
+api.Music.stop();
+audio.reset();
+api.Music.start();
+check("starting the music opens an audio context", !!api.Music._ctx);
+check("the music reports itself as playing", api.Music.playing === true);
+
+/* Walk the clock forward through two bars and collect what got scheduled. */
+for (let i = 0; i < 40; i++) audio.advanceAudio(0.1);
+
+const notes = audio.scheduled.filter(e => e.kind === "osc");
+const drums = audio.scheduled.filter(e => e.kind === "noise");
+check("notes were scheduled", notes.length > 20, String(notes.length));
+check("drum hits were scheduled", drums.length > 5, String(drums.length));
+
+/* The lead is a square wave; check the first few pitches are the tune. */
+const lead = notes.filter(n => n.type === "square").sort((a, b) => a.when - b.when);
+const wantNotes = ["c5", "c5", "d5", "e5", "c5", "e5", "d5"].map(api.noteFreq);
+const got = lead.slice(0, wantNotes.length).map(n => n.freq);
+check("the melody comes out as the notes that were written",
+  got.every((f, i) => Math.abs(f - wantNotes[i]) < 0.5),
+  `wanted ${wantNotes.map(f => f.toFixed(0))} got ${got.map(f => f.toFixed(0))}`);
+
+check("notes are scheduled in time order, none in the past",
+  lead.every((n, i) => i === 0 || n.when >= lead[i - 1].when));
+
+/* Beats should be spaced by the track's tempo, not bunched up. */
+const bpm = api.TRACKS[api.Music.index].bpm;
+const beatDur = 60 / bpm / 2;
+const gaps = [];
+for (let i = 1; i < Math.min(lead.length, 8); i++) gaps.push(lead[i].when - lead[i - 1].when);
+/* Every gap should be a whole number of beats: one beat normally, two where
+   the melody holds a note. Comparing the ratio avoids float modulo grief. */
+check("the spacing between notes matches the tempo",
+  gaps.every(g => {
+    const beats = g / beatDur;
+    return beats >= 0.98 && Math.abs(beats - Math.round(beats)) < 0.02;
+  }),
+  `beat=${beatDur.toFixed(3)}s gaps=${gaps.map(g => (g / beatDur).toFixed(2) + " beats")}`);
+
+/* The pattern must loop rather than stop at the end. */
+const beforeLoop = api.Music._beat;
+for (let i = 0; i < 60; i++) audio.advanceAudio(0.1);
+check("the tune keeps looping", api.Music._beat > beforeLoop + 20,
+  `${beforeLoop} -> ${api.Music._beat}`);
+
+check("muting stops the scheduler", (() => {
+  api.Music.toggle();
+  const stopped = api.Music.playing === false;
+  api.Music.toggle();
+  return stopped;
+})());
+
+console.log("\n== changing track changes the tune ==");
+audio.reset();
+api.Music.next();
+for (let i = 0; i < 20; i++) audio.advanceAudio(0.1);
+check("the new track schedules its own notes",
+  audio.scheduled.filter(e => e.kind === "osc").length > 10);
+api.Music.stop();
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

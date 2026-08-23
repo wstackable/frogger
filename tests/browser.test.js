@@ -114,13 +114,15 @@ async function evaluate(expression) {
 }
 
 const KEYCODES = {
-  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, " ": 32, p: 80, r: 82,
+  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, " ": 32,
+  p: 80, r: 82, m: 77, c: 67, n: 78,
 };
 
 async function press(key) {
   const code = KEYCODES[key];
   const common = {
-    key, code: key === " " ? "Space" : key,
+    key,
+    code: key === " " ? "Space" : (key.startsWith("Arrow") ? key : "Key" + key.toUpperCase()),
     windowsVirtualKeyCode: code, nativeVirtualKeyCode: code,
   };
   await send("Input.dispatchKeyEvent", { type: "keyDown", ...common });
@@ -158,16 +160,18 @@ try {
 
   check("the game object exists on the page",
     await evaluate("typeof frogger === 'object'"));
-  check("all four scripts loaded",
+  check("all six scripts loaded",
     await evaluate("typeof CONFIG==='object' && typeof SPRITES==='object' && " +
-                   "typeof Art==='object' && typeof Sound==='object'"));
+                   "typeof Art==='object' && typeof Sound==='object' && " +
+                   "typeof Music==='object' && typeof PALETTES==='object'"));
   check("the canvas has real pixels",
     await evaluate("document.getElementById('game').width > 0"));
 
   /* Headless Chrome has no window focus, which trips the pause-on-blur. Hold
      it open for the rest of the test. */
-  await evaluate(`(function keep(){ frogger.game.paused = false;
-    requestAnimationFrame(keep); })()`);
+  await evaluate(`window.__keep = true;
+    (function keep(){ if (window.__keep) frogger.game.paused = false;
+      requestAnimationFrame(keep); })()`);
 
   await frames(20);
   let s = await state();
@@ -200,14 +204,18 @@ try {
 
   /* -------------------------------------------------------------- pause */
   console.log("\n== pause and restart ==");
-  await evaluate("window.__keep = false");      /* stop forcing unpause briefly */
-  await evaluate(`frogger.game.paused = false`);
+  await evaluate("window.__keep = false");      /* stop forcing unpause */
+  await evaluate("frogger.game.paused = false");
+  await frames(3);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "p", code: "KeyP",
     windowsVirtualKeyCode: 80, nativeVirtualKeyCode: 80 });
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: "p", code: "KeyP",
     windowsVirtualKeyCode: 80, nativeVirtualKeyCode: 80 });
+  await frames(3);
   const pausedNow = await evaluate("frogger.game.paused");
   check("P pauses", pausedNow === true, String(pausedNow));
+
+  await evaluate("window.__keep = true");       /* hold it open again */
 
   /* ------------------------------------------------------- the clock runs */
   console.log("\n== the world is actually running ==");
@@ -254,6 +262,79 @@ try {
   check("240 frames of a busy board with no errors",
     pageErrors.length + consoleErrors.length === errsBefore,
     [...pageErrors, ...consoleErrors].slice(errsBefore).join(" | "));
+
+  /* --------------------------------------------------- the radio actually plays */
+  console.log("\n== the radio ==");
+
+  /* Chrome needs a real gesture before it will make a sound, so click first. */
+  await send("Input.dispatchMouseEvent", { type: "mousePressed", x: 300, y: 400,
+    button: "left", clickCount: 1 });
+  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 300, y: 400,
+    button: "left", clickCount: 1 });
+  await frames(10);
+  await evaluate("frogger.Music.enabled = true; CONFIG.music = true; frogger.Music.start()");
+  await frames(20);
+
+  check("an AudioContext is running",
+    await evaluate("frogger.Music._ctx && frogger.Music._ctx.state === 'running'"),
+    await evaluate("String(frogger.Music._ctx && frogger.Music._ctx.state)"));
+  check("the music is playing", await evaluate("frogger.Music.playing === true"));
+
+  const beat0 = await evaluate("frogger.Music._beat");
+  await new Promise((r) => setTimeout(r, 600));
+  const beat1 = await evaluate("frogger.Music._beat");
+  check("the scheduler keeps advancing through the tune", beat1 > beat0,
+    `beat ${beat0} -> ${beat1}`);
+  check("the audio clock is running",
+    await evaluate("frogger.Music._ctx.currentTime > 0"));
+
+  /* Every note in every track must resolve to a real frequency. */
+  const badNotes = await evaluate(`(() => {
+    const bad = [];
+    for (const t of frogger.TRACKS) {
+      for (const v of ['lead','bass']) {
+        for (const tok of String(t[v]||'').trim().split(' ').filter(Boolean)) {
+          if (tok === '.' || tok === '-' || !tok) continue;
+          const f = noteFreq(tok);
+          if (!f || f < 20 || f > 8000) bad.push(t.name + ' ' + v + ' ' + tok + ' = ' + f);
+        }
+      }
+    }
+    return bad;
+  })()`);
+  check("every note is a sensible audible frequency", badNotes.length === 0,
+    badNotes.slice(0, 5).join(" | "));
+
+  const nameBefore = await evaluate("frogger.Music.trackName()");
+  await press("r");
+  const nameAfter = await evaluate("frogger.Music.trackName()");
+  check("R changes the track", nameBefore !== nameAfter, `${nameBefore} -> ${nameAfter}`);
+  check("R shows a popup", await evaluate("!!frogger.game.notice"));
+
+  await press("m");
+  check("M mutes", await evaluate("frogger.Music.enabled === false"));
+  await press("m");
+  check("M unmutes", await evaluate("frogger.Music.enabled === true"));
+
+  console.log("\n== the colour switcher ==");
+  const palBefore = await evaluate("frogger.Art.paletteName()");
+  const waterBefore = await evaluate("frogger.Art.color('water')");
+  await press("c");
+  const palAfter = await evaluate("frogger.Art.paletteName()");
+  check("C changes the palette", palBefore !== palAfter, `${palBefore} -> ${palAfter}`);
+  check("the water colour actually changed",
+    (await evaluate("frogger.Art.color('water')")) !== waterBefore);
+
+  /* Walk through every palette drawing frames, to catch a bad colour value. */
+  const palErrs = pageErrors.length + consoleErrors.length;
+  for (let i = 0; i < (await evaluate("PALETTES.length")); i++) {
+    await evaluate(`frogger.Art.setPalette(${i})`);
+    await frames(20);
+  }
+  check("every palette renders cleanly",
+    pageErrors.length + consoleErrors.length === palErrs,
+    [...pageErrors, ...consoleErrors].slice(palErrs).join(" | "));
+  await evaluate("frogger.Art.setPalette(0)");
 
   /* ---------------------------------------------------- no console noise */
   console.log("\n== the console is clean ==");

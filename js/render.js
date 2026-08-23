@@ -32,11 +32,48 @@ const Art = {
     return (theme.art && theme.art[kind]) || THEMES.arcade.art[kind] || null;
   },
 
-  /* A background colour, e.g. Art.color('water'). */
+  /* A background colour, e.g. Art.color('water'). A palette chosen with C
+     wins over the theme's own colours. */
   color(name) {
+    if (this._bgOverride && this._bgOverride[name]) return this._bgOverride[name];
     const theme = this.theme();
     return (theme.palette && theme.palette[name]) ||
            THEMES.arcade.palette[name] || '#ff00ff';
+  },
+
+  /* What colour one letter of pixel art means right now. */
+  pixel(ch) {
+    if (this._pxOverride && this._pxOverride[ch]) return this._pxOverride[ch];
+    return PALETTE[ch];
+  },
+
+  /* --- Colour palettes, cycled with C ---------------------------------- */
+
+  _paletteIndex: 0,
+  _bgOverride: null,
+  _pxOverride: null,
+
+  palettes() {
+    return (typeof PALETTES !== 'undefined' && PALETTES.length)
+      ? PALETTES : [{ name: 'Default' }];
+  },
+
+  setPalette(i) {
+    const list = this.palettes();
+    this._paletteIndex = ((i % list.length) + list.length) % list.length;
+    const p = list[this._paletteIndex];
+    this._bgOverride = p.bg || null;
+    this._pxOverride = p.pixels || null;
+    this._tiles = {};          /* the cached sprites are the wrong colour now */
+    return p.name;
+  },
+
+  nextPalette() {
+    return this.setPalette(this._paletteIndex + 1);
+  },
+
+  paletteName() {
+    return this.palettes()[this._paletteIndex].name;
   },
 
   /* --- PNG loading ----------------------------------------------------- */
@@ -113,7 +150,7 @@ const Art = {
         );
       }
       for (let rx = 0; rx < row.length; rx++) {
-        const color = PALETTE[row[rx]];
+        const color = Art.pixel(row[rx]);
         if (!color) continue;              /* '.' or unknown letter */
         c.fillStyle = color;
         const x0 = Math.floor(rx * cw);

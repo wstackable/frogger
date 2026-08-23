@@ -211,7 +211,14 @@ const game = {
   frog: null,
   deathReason: '',
   lastBonus: null,     /* a little "+200" that floats up */
+  notice: null,        /* the R / M / C popup: { text, at } */
 };
+
+/* A short banner in the middle of the screen, for the radio and the palette
+   switcher. Same idea as the popup in Phoenix 89. */
+function notify(text) {
+  game.notice = { text, at: game.time };
+}
 
 function newFrog() {
   const x = START_COL * GRID;
@@ -728,9 +735,42 @@ window.addEventListener('keydown', (e) => {
     else game.paused = !game.paused;
   }
 
-  if (e.key === 'p' || e.key === 'P') game.paused = !game.paused;
-  if (e.key === 'r' || e.key === 'R') startGame();
+  const k = e.key.toLowerCase();
+
+  if (k === 'p') game.paused = !game.paused;
+
+  /* R cycles the radio, M mutes it, C cycles the colour palette. Same keys as
+     Phoenix 89 so there is only one set to remember. */
+  if (k === 'r') {
+    const name = Music.next();
+    notify(Music.enabled && CONFIG.music ? `\u266a  ${name}` : `\u266a  ${name}  (muted)`);
+  }
+  if (k === 'm') {
+    const on = Music.toggle();
+    refreshMuteBtn();
+    notify(on ? '\u266a  MUSIC ON' : '\u266a  MUSIC OFF');
+  }
+  if (k === 'c') {
+    notify(`PALETTE:  ${Art.nextPalette()}`);
+  }
+
+  /* N starts a fresh game, since R is the radio now. */
+  if (k === 'n') startGame();
 });
+
+/* Browsers will not make a sound until the player has interacted with the
+   page, so the music starts on the first key press or tap. */
+let audioStarted = false;
+function startAudioOnce() {
+  if (audioStarted) return;
+  audioStarted = true;
+  Music.restorePreferences();
+  refreshMuteBtn();
+  Music.start();
+}
+window.addEventListener('keydown', startAudioOnce);
+window.addEventListener('pointerdown', startAudioOnce);
+window.addEventListener('touchstart', startAudioOnce, { passive: true });
 
 window.addEventListener('blur', () => { if (game.state === 'play') game.paused = true; });
 
@@ -776,6 +816,31 @@ if (touchVisible()) {
   });
 }
 
+/* --- Radio and colour buttons, mirroring the R, M and C keys ------------- */
+const radioBtn   = document.getElementById('radioBtn');
+const muteBtn    = document.getElementById('muteBtn');
+const paletteBtn = document.getElementById('paletteBtn');
+
+function refreshMuteBtn() {
+  if (!muteBtn) return;
+  const on = Music.enabled && CONFIG.music;
+  muteBtn.textContent = on ? '\u{1F50A}' : '\u{1F507}';
+  muteBtn.classList.toggle('off', !on);
+}
+
+if (radioBtn) radioBtn.addEventListener('click', () => {
+  const name = Music.next();
+  notify(`\u266a  ${name}`);
+});
+if (muteBtn) muteBtn.addEventListener('click', () => {
+  const on = Music.toggle();
+  refreshMuteBtn();
+  notify(on ? '\u266a  MUSIC ON' : '\u266a  MUSIC OFF');
+});
+if (paletteBtn) paletteBtn.addEventListener('click', () => {
+  notify(`PALETTE:  ${Art.nextPalette()}`);
+});
+
 window.addEventListener('resize', fitToScreen);
 window.addEventListener('orientationchange', fitToScreen);
 
@@ -792,7 +857,41 @@ function draw() {
   drawBays();
   if (game.frog) drawFrog();
   drawHud();
+  drawDeathBanner();
   drawOverlay();
+  drawNotice();
+}
+
+/* The R / M / C popup. Drawn last so it sits on top of everything, including
+   the title screen, because you can change track from anywhere. */
+function drawNotice() {
+  if (!game.notice) return;
+  const age = game.time - game.notice.at;
+  if (age > 1.9) { game.notice = null; return; }
+
+  const alpha = Math.min(1, age / 0.1) * Math.max(0, Math.min(1, (1.9 - age) / 0.4));
+  const cx = WIDTH / 2;
+  const y = HEIGHT - GRID * 2.1;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = `bold ${Math.round(GRID * 0.3)}px "Courier New", monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const w = ctx.measureText(game.notice.text).width + GRID * 0.8;
+  const h = GRID * 0.62;
+
+  ctx.fillStyle = 'rgba(6,6,12,0.92)';
+  roundRect(ctx, cx - w / 2, y - h / 2, w, h, h / 2);
+  ctx.fill();
+  ctx.strokeStyle = Art.color('accent');
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = Art.color('accent');
+  ctx.fillText(game.notice.text, cx, y + 1);
+  ctx.restore();
 }
 
 function drawBackground() {
@@ -1010,8 +1109,81 @@ function drawHud() {
    Overlays
    ========================================================================== */
 
+/* Which full-screen overlay, if any, should be showing right now.
+   Returning null for 'dying' matters: an earlier version fell through to the
+   panel with no text in it, so every death flashed an empty black box. */
+function overlayFor() {
+  if (game.paused && game.state === 'play') return 'paused';
+  if (game.state === 'title' || game.state === 'levelClear' ||
+      game.state === 'gameOver') return game.state;
+  return null;
+}
+
+/* --------------------------------------------------------------------------
+   Why you just died, and what to do about it next time.
+
+   The arcade never explained itself, but the arcade also had a cabinet full
+   of people watching over your shoulder. A single line is enough to teach the
+   one rule that catches everybody: on the river you have to be standing on
+   something.
+   -------------------------------------------------------------------------- */
+const DEATH_HINTS = {
+  'Squashed':                'wait for a gap in the traffic',
+  'Drowned':                 'you have to land ON a log or a turtle',
+  'The turtles dived':       'hop off as soon as they start to sink',
+  'Washed away':             'do not let a log carry you off the edge',
+  'Hit the bank':            'aim for a lilypad, not the green bank',
+  'That lilypad is taken':   'pick one you have not filled yet',
+  'A crocodile was waiting': 'not every lilypad is what it looks like',
+  'Eaten by a crocodile':    'ride the back, never the jaws',
+  'Bitten by a snake':       'the median stops being safe at level 3',
+  'Out of time':             'keep an eye on the TIME bar',
+};
+
+function drawDeathBanner() {
+  if (game.state !== 'dying') return;
+
+  /* Fade in fast, hold, fade out with the splat. */
+  const age = game.stateTime;
+  const alpha = Math.min(1, age / 0.12) * Math.max(0, Math.min(1, (0.9 - age) / 0.2));
+  if (alpha <= 0) return;
+
+  const reason = game.deathReason || '';
+  const hint = DEATH_HINTS[reason] || '';
+
+  const cx = WIDTH / 2;
+  const y = HEIGHT / 2 - GRID * 0.4;
+  const h = hint ? GRID * 1.5 : GRID * 0.95;
+  const w = WIDTH - GRID * 1.2;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  ctx.fillStyle = 'rgba(6,6,12,0.9)';
+  roundRect(ctx, cx - w / 2, y, w, h, 10);
+  ctx.fill();
+  ctx.strokeStyle = Art.color('timeLow');
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.round(GRID * 0.36)}px "Courier New", monospace`;
+  ctx.fillText(reason.toUpperCase(), cx, y + (hint ? GRID * 0.48 : h / 2));
+
+  if (hint) {
+    ctx.fillStyle = Art.color('textDim');
+    ctx.font = `${Math.round(GRID * 0.28)}px "Courier New", monospace`;
+    ctx.fillText(hint, cx, y + GRID * 1.02);
+  }
+
+  ctx.restore();
+}
+
 function drawOverlay() {
-  if (game.state === 'play' && !game.paused) return;
+  const showing = overlayFor();
+  if (!showing) return;
 
   ctx.fillStyle = 'rgba(0,0,0,0.76)';
   ctx.fillRect(0, GRID, WIDTH, HEIGHT - GRID * 2);
@@ -1019,8 +1191,8 @@ function drawOverlay() {
   const cx = WIDTH / 2;
   const cy = HEIGHT / 2;
 
-  const panelH = game.state === 'title' ? GRID * 7.4
-               : game.state === 'gameOver' ? GRID * 6
+  const panelH = showing === 'title' ? GRID * 8.0
+               : showing === 'gameOver' ? GRID * 6
                : GRID * 3.6;
   const panelW = WIDTH - GRID * 0.6;
 
@@ -1038,7 +1210,7 @@ function drawOverlay() {
   const mid   = () => { ctx.font = `bold ${Math.round(GRID * 0.34)}px "Courier New", monospace`; };
   const small = () => { ctx.font = `${Math.round(GRID * 0.27)}px "Courier New", monospace`; };
 
-  if (game.paused && game.state === 'play') {
+  if (showing === 'paused') {
     big(); ctx.fillStyle = '#fff';
     ctx.fillText('PAUSED', cx, cy - 12);
     small(); ctx.fillStyle = Art.color('textDim');
@@ -1046,7 +1218,7 @@ function drawOverlay() {
     return;
   }
 
-  switch (game.state) {
+  switch (showing) {
 
     case 'title': {
       big(); ctx.fillStyle = '#fff';
@@ -1063,11 +1235,13 @@ function drawOverlay() {
       small(); ctx.fillStyle = Art.color('textDim');
       ctx.fillText('cars squash you  ::  water drowns you', cx, cy + GRID * 1.25);
       ctx.fillText('ride the logs and the turtles', cx, cy + GRID * 1.7);
-      ctx.fillText('arrows or WASD  ::  P pause  ::  R restart', cx, cy + GRID * 2.15);
+      ctx.fillText('arrows or WASD  ::  P pause  ::  N new game', cx, cy + GRID * 2.15);
+      ctx.fillStyle = Art.color('accent');
+      ctx.fillText('R music  ::  M mute  ::  C colours', cx, cy + GRID * 2.6);
 
       if (Math.floor(game.time * 1.6) % 2 === 0) {
         mid(); ctx.fillStyle = '#fff';
-        ctx.fillText('PRESS SPACE TO START', cx, cy + GRID * 2.9);
+        ctx.fillText('PRESS SPACE TO START', cx, cy + GRID * 3.35);
       }
       break;
     }
@@ -1133,6 +1307,7 @@ function loop(now) {
   if (!game.paused) update(dt);
   else game.time += dt;
 
+  Music.pump();
   draw();
 }
 
@@ -1142,7 +1317,8 @@ requestAnimationFrame(loop);
 
 /* For poking at the game from the browser console, and for the tests. */
 window.frogger = {
-  game, lanes, CONFIG, PROGRESSION, SPRITES, PALETTE, THEMES,
+  game, lanes, CONFIG, PROGRESSION, SPRITES, PALETTE, THEMES, PALETTES,
+  Music, Art, notify, TRACKS, DEATH_HINTS, overlayFor, noteFreq,
   startGame, startLevel, hop, laneY, diveState, speedMultiplier,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };

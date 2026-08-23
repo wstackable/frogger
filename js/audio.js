@@ -33,6 +33,11 @@ const Sound = {
     return this._ctx;
   },
 
+  /* The music player shares this, so one user gesture unlocks both. */
+  context() {
+    return this._context();
+  },
+
   play(name) {
     if (!CONFIG.sound) return;
     const def = SOUNDS[name];
