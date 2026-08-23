@@ -2604,5 +2604,111 @@ check("a claimed track drops out of the shuffle", (() => {
 })());
 
 
+console.log("\n== the main menu ==");
+
+function toTitle() {
+  game.state = "title";
+  game.titleView = "main";
+  game.mainPick = 0;
+  frames(1);
+}
+
+check("the game opens on a menu, not on a list of seventeen levels", (() => {
+  toTitle();
+  return game.titleView === "main" && api.MAIN_MENU.length === 3;
+})());
+
+check("the menu offers start, difficulty and level select", (() => {
+  const keys = api.MAIN_MENU.map(r => r.key);
+  return keys.includes("start") && keys.includes("mode") && keys.includes("levels");
+})(), api.MAIN_MENU.map(r => r.key).join(","));
+
+check("up and down move between the rows and wrap", (() => {
+  toTitle();
+  api.mainMenuMove(1);
+  const one = game.mainPick;
+  api.mainMenuMove(-1);
+  const back = game.mainPick;
+  api.mainMenuMove(-1);
+  return one === 1 && back === 0 && game.mainPick === api.MAIN_MENU.length - 1;
+})());
+
+check("left and right change the difficulty, but only on that row", (() => {
+  toTitle();
+  const was = game.mode;
+  api.mainMenuSide(1);
+  const unchanged = game.mode === was;      /* row 0 is START, not the mode */
+
+  game.mainPick = api.MAIN_MENU.findIndex(r => r.key === "mode");
+  api.mainMenuSide(1);
+  return unchanged && game.mode !== was;
+})(), game.mode);
+
+check("start begins the game at level one", (() => {
+  toTitle();
+  game.pickedLevel = 9;                     /* even with the list pointing high */
+  game.mainPick = api.MAIN_MENU.findIndex(r => r.key === "start");
+  api.mainMenuChoose();
+  frames(1);
+  return game.level === 1 && game.state !== "title";
+})(), `level ${game.level} state ${game.state}`);
+
+check("level select opens the list", (() => {
+  toTitle();
+  game.mainPick = api.MAIN_MENU.findIndex(r => r.key === "levels");
+  api.mainMenuChoose();
+  return game.titleView === "levels";
+})());
+
+check("and escape comes back out of it", (() => {
+  api.backToMainMenu();
+  return game.titleView === "main";
+})());
+
+check("starting a game always leaves the menu on the front page", (() => {
+  toTitle();
+  game.titleView = "levels";
+  api.startGame(3);
+  return game.titleView === "main";
+})());
+
+check("the menu's lines are in order and inside its panel", (() => {
+  const L = api.mainLayout(api.HEIGHT / 2);
+  const ys = [L.frog, L.title, ...L.rows, L.hint, L.keys];
+  const pad = CONFIG.grid * 0.25;
+  for (let i = 1; i < ys.length; i++) {
+    if (ys[i] - ys[i - 1] < CONFIG.grid * 0.3) return `rows ${i - 1}/${i} collide`;
+  }
+  for (const y of ys) {
+    if (y < L.panelTop + pad || y > L.panelBottom - pad) return `line at ${y.toFixed(0)} outside`;
+  }
+  return true;
+})() === true, "menu layout is wrong");
+
+
+check("a swipe on the title drives the menu instead of starting the game", (() => {
+  /* hop() is what a swipe and the on-screen buttons call. On the title it used
+     to go straight to startGame, so a swipe skipped the menu entirely. */
+  toTitle();
+  api.hop(0, 1);
+  const moved = game.mainPick === 1;
+  return moved && game.state === "title";
+})(), `pick ${game.mainPick} state ${game.state}`);
+
+check("and a swipe inside the level list picks a level", (() => {
+  toTitle();
+  game.titleView = "levels";
+  game.pickedLevel = 3;
+  api.hop(0, 1);
+  return game.pickedLevel === 4 && game.state === "title";
+})(), String(game.pickedLevel));
+
+check("game over still restarts from the top", (() => {
+  game.state = "gameOver";
+  api.hop(0, -1);
+  return game.level === 1 && game.state !== "gameOver";
+})(), `level ${game.level}`);
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

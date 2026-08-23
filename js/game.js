@@ -233,6 +233,9 @@ const game = {
   bonusTotal: 0,       /* what the last bonus round was worth */
   ghostTime: 0,        /* banked world time, for the boneyard level */
   pickedLevel: 1,      /* which level the title screen is pointing at */
+  titleView: 'main',   /* 'main' or 'levels'. the level list is behind a menu
+                          entry now, rather than being the whole title screen. */
+  mainPick: 0,         /* which row of the main menu is highlighted */
   lastBonus: null,     /* a little "+200" that floats up */
   fx: [],              /* short-lived puffs and rings on the crossing levels */
   riding: null,        /* the log or turtle group under the frog right now */
@@ -425,6 +428,7 @@ function applyPlan() {
    ========================================================================== */
 
 function startGame(atLevel) {
+  game.titleView = 'main';
   game.score = 0;
   game.level = Math.max(1, atLevel || game.pickedLevel || 1);
   game.lives = setting('lives', CONFIG.lives);
@@ -3500,7 +3504,8 @@ function takeHeliHit() {
 
 function hop(dx, dy) {
   if (inBonus()) return;                 /* the truck drives, it does not hop */
-  if (game.state === 'title' || game.state === 'gameOver') { startGame(); return; }
+  if (game.state === 'title') { titleMove(dx, dy); return; }
+  if (game.state === 'gameOver') { startGame(1); return; }
   if (game.state !== 'play' || game.paused) return;
 
   const frog = game.frog;
@@ -3651,6 +3656,12 @@ window.addEventListener('keydown', (e) => {
   /* Escape opens and closes the menu from anywhere. */
   if (e.key === 'Escape') {
     e.preventDefault();
+    /* On the title screen Escape means "back", not "pause". There is nothing
+       to pause. */
+    if (game.state === 'title') {
+      if (game.titleView === 'levels') backToMainMenu();
+      return;
+    }
     if (game.menuOpen) closePauseMenu();
     else openPauseMenu();
     return;
@@ -3670,15 +3681,9 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     setHeld(e.key, true);
 
-    /* On the title screen the arrows drive the pickers, not the frog. */
+    /* On the title screen the arrows drive the menu, not the frog. */
     if (game.state === 'title') {
-      if (move[0] !== 0) { cycleMode(move[0]); Sound.play('hop'); }
-      if (move[1] !== 0) {
-        game.pickedLevel = (game.pickedLevel || 1) + move[1];
-        clampPickedLevel();
-        Art.setEnvironment(planFor(game.pickedLevel).env || 'pond');
-        Sound.play('hop');
-      }
+      titleMove(move[0], move[1]);
       return;
     }
 
@@ -3688,7 +3693,8 @@ window.addEventListener('keydown', (e) => {
 
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
-    if (game.state === 'title' || game.state === 'gameOver') startGame();
+    if (game.state === 'title') titleChoose();
+    else if (game.state === 'gameOver') startGame(1);
     else if (game.state === 'victory') { game.level++; enterLevel(); }
     else game.paused = !game.paused;
   }
@@ -3750,7 +3756,8 @@ canvas.addEventListener('touchend', (e) => {
   touchStart = null;
 
   if (Math.abs(dx) < 24 && Math.abs(dy) < 24) {
-    if (game.state === 'title' || game.state === 'gameOver') startGame();
+    if (game.state === 'title') titleChoose();
+    else if (game.state === 'gameOver') startGame(1);
     else game.paused = !game.paused;
     return;
   }
@@ -5160,7 +5167,8 @@ function drawOverlay() {
   const cx = WIDTH / 2;
   const cy = HEIGHT / 2;
 
-  const panelH = showing === 'title' ? TITLE_PANEL_H
+  const panelH = showing === 'title'
+                 ? (game.titleView === 'levels' ? TITLE_PANEL_H : MAIN_PANEL_H)
                : showing === 'gameOver' ? GRID * 6
                : showing === 'levelClear' ? CLEAR_PANEL_H
                : GRID * 3.6;
@@ -5195,6 +5203,8 @@ function drawOverlay() {
       ctx.fillText('FROGGER', cx, cy - GRID * 3.6);
 
       const bob = Math.sin(game.time * 2.2) * GRID * 0.06;
+      if (game.titleView !== 'levels') { drawMainMenu(cx, cy); break; }
+
       const L = titleLayout(cy);
 
       const s = GRID * 1.05;
@@ -5213,15 +5223,15 @@ function drawOverlay() {
       drawLevelList(cx, L.listCy, L);
 
       small(); ctx.fillStyle = Art.color('textDim');
-      ctx.fillText('up / down pick a level  ::  left / right pick a mode',
+      ctx.fillText('up / down pick a level  ::  SPACE to play it',
                    cx, L.controls);
       ctx.fillStyle = Art.color('accent');
-      ctx.fillText('R music  ::  M mute  ::  C colours  ::  P pause  ::  ESC menu',
+      ctx.fillText('ESC to go back  ::  R music  ::  M mute  ::  C colours',
                    cx, L.keys);
 
       if (Math.floor(game.time * 1.6) % 2 === 0) {
         mid(); ctx.fillStyle = '#fff';
-        ctx.fillText('PRESS SPACE TO START', cx, L.start);
+        ctx.fillText('PRESS SPACE TO PLAY', cx, L.start);
       }
       break;
     }
@@ -5328,6 +5338,80 @@ function clampPickedLevel() {
   game.pickedLevel = Math.max(1, Math.min(n, game.pickedLevel || 1));
 }
 
+/* ==========================================================================
+   The main menu
+   --------------------------------------------------------------------------
+   The title screen used to BE the level list, which meant the first thing the
+   game asked a new player was "which of seventeen levels would you like",
+   before they knew what any of them were. Now it opens on three choices, and
+   the list is behind one of them for when you want it.
+   ========================================================================== */
+
+const MAIN_MENU = [
+  { key: 'start',  label: 'START GAME' },
+  { key: 'mode',   label: 'DIFFICULTY' },
+  { key: 'levels', label: 'LEVEL SELECT' },
+];
+
+/* A direction on the title screen, from the keyboard or a swipe. Both routes
+   used to end up calling startGame, which meant a swipe on the title started
+   the game rather than driving the menu that is now there. */
+function titleMove(dx, dy) {
+  if (game.titleView === 'levels') {
+    if (dy) {
+      game.pickedLevel = (game.pickedLevel || 1) + dy;
+      clampPickedLevel();
+      Art.setEnvironment(planFor(game.pickedLevel).env || 'pond');
+      Sound.play('hop');
+    }
+    if (dx) { cycleMode(dx); Sound.play('hop'); }
+    return;
+  }
+  if (dy) mainMenuMove(dy);
+  if (dx) mainMenuSide(dx);
+}
+
+/* And the one place that handles "yes, that one". */
+function titleChoose() {
+  if (game.titleView === 'levels') startGame(game.pickedLevel);
+  else mainMenuChoose();
+}
+
+function mainMenuMove(dy) {
+  game.mainPick = (game.mainPick + dy + MAIN_MENU.length) % MAIN_MENU.length;
+  Sound.play('hop');
+}
+
+function mainMenuChoose() {
+  const row = MAIN_MENU[game.mainPick];
+
+  if (row.key === 'start') {
+    /* Straight in at the beginning, whatever the level list is pointing at.
+       Picking a level is what LEVEL SELECT is for. */
+    startGame(1);
+    return;
+  }
+  if (row.key === 'mode') {
+    cycleMode(1);
+    Sound.play('hop');
+    return;
+  }
+  game.titleView = 'levels';
+  Sound.play('pickup');
+}
+
+/* Left and right on the main menu only mean anything on the difficulty row. */
+function mainMenuSide(dx) {
+  if (MAIN_MENU[game.mainPick].key !== 'mode') return;
+  cycleMode(dx);
+  Sound.play('hop');
+}
+
+function backToMainMenu() {
+  game.titleView = 'main';
+  Sound.play('hop');
+}
+
 /* How tall the level list is. It grows and shrinks with the number of levels,
    which is why nothing below it can be positioned by a hardcoded offset. */
 function levelListMetrics() {
@@ -5338,6 +5422,21 @@ function levelListMetrics() {
 }
 
 const TITLE_PANEL_H = GRID * 11.2;
+const MAIN_PANEL_H  = GRID * 8.4;
+
+/* The main menu's y positions, in one place, same as the other two screens. */
+function mainLayout(cy) {
+  const rows = MAIN_MENU.map((r, i) => cy - GRID * 0.55 + i * GRID * 0.95);
+  return {
+    frog:  cy - GRID * 2.75,
+    title: cy - GRID * 1.75,
+    rows,
+    hint:  rows[rows.length - 1] + GRID * 1.05,
+    keys:  rows[rows.length - 1] + GRID * 1.45,
+    panelTop:    cy - MAIN_PANEL_H / 2,
+    panelBottom: cy + MAIN_PANEL_H / 2,
+  };
+}
 
 /* Every y on the title screen, worked out in one place. The drawing code and
    the test that checks these lines do not land on each other read the same
@@ -5367,6 +5466,76 @@ function titleLayout(cy) {
     panelTop:    cy - TITLE_PANEL_H / 2,
     panelBottom: cy + TITLE_PANEL_H / 2,
   };
+}
+
+/* The main menu itself. Three rows, the middle one showing which difficulty
+   you are on, and the level list tucked behind the third. */
+function drawMainMenu(cx, cy) {
+  const L = mainLayout(cy);
+  const font = (px, bold) =>
+    `${bold ? 'bold ' : ''}${Math.round(px)}px "Courier New", monospace`;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const bob = Math.sin(game.time * 2) * GRID * 0.06;
+  const s = GRID * 1.05;
+  drawArt(ctx, Art.of('frog'), cx - s / 2, L.frog + bob, s, s,
+          { cells: 1, time: game.time });
+
+  ctx.font = font(GRID * 0.62, true);
+  ctx.fillStyle = Art.color('accent');
+  ctx.fillText('FROGGER', cx, L.title);
+
+  MAIN_MENU.forEach((row, i) => {
+    const picked = i === game.mainPick;
+    const y = L.rows[i];
+
+    if (picked) {
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      roundRect(ctx, cx - WIDTH * 0.34, y - GRID * 0.32,
+                WIDTH * 0.68, GRID * 0.64, 6);
+      ctx.fill();
+    }
+
+    ctx.font = font(GRID * 0.42, true);
+    ctx.fillStyle = picked ? '#ffffff' : Art.color('textDim');
+
+    if (row.key === 'mode') {
+      const m = mode();
+      /* Arrows on the row that has something to change, so it is obvious
+         which one left and right belong to. */
+      ctx.textAlign = 'left';
+      ctx.fillText(row.label, cx - WIDTH * 0.30, y);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = Art.color('accent');
+      ctx.fillText(picked ? `\u25c0  ${m.label}  \u25b6` : m.label,
+                   cx + WIDTH * 0.30, y);
+
+      ctx.textAlign = 'center';
+      ctx.font = font(GRID * 0.24);
+      ctx.fillStyle = Art.color('textDim');
+      ctx.fillText(m.blurb, cx, y + GRID * 0.31);
+    } else {
+      ctx.textAlign = 'left';
+      ctx.fillText(row.label, cx - WIDTH * 0.30, y);
+      if (row.key === 'levels') {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = Art.color('textDim');
+        ctx.font = font(GRID * 0.3, true);
+        ctx.fillText(`${LEVELS.length} levels  \u25b6`, cx + WIDTH * 0.30, y);
+      }
+      ctx.textAlign = 'center';
+    }
+  });
+
+  ctx.textAlign = 'center';
+  ctx.font = font(GRID * 0.26);
+  ctx.fillStyle = Math.floor(game.time * 1.6) % 2 === 0 ? '#ffffff' : Art.color('textDim');
+  ctx.fillText('up / down to choose  ::  SPACE to pick', cx, L.hint);
+
+  ctx.fillStyle = Art.color('accent');
+  ctx.fillText('R music  ::  M mute  ::  C colours  ::  ESC pause in game', cx, L.keys);
 }
 
 function drawLevelList(cx, cy, L) {
@@ -5572,6 +5741,9 @@ window.frogger = {
   updateAir, airless, timeCapacity, AIR, spawnAirPocket, airRows,
   lanternAt, resetGhosts, updateGhosts,
   titleLayout, levelListMetrics, TITLE_PANEL_H,
+  MAIN_MENU, mainMenuMove, mainMenuChoose, mainMenuSide, backToMainMenu,
+  titleMove, titleChoose,
+  mainLayout, MAIN_PANEL_H,
   clearLayout, nextUp, CLEAR_PANEL_H, nextLevelWarning,
   updateGators, gatorPhase, gatorBites, GATOR, gatorHeadCell, cellUnder,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
