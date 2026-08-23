@@ -262,7 +262,10 @@ const LEVELS = [
     blurb: 'ice, crocodiles and snakes, all at once.',      kind: 'cross',  env: 'arctic',
     speed: 1.26, roadLanes: 5, river: 'tight',
     hazards: ['fly', 'bayCroc', 'snake', 'gator', 'diving'],
-    rules: { ice: true } },
+    /* The snakes patrol here rather than hunt. Ice already says "you cannot
+       stop", and the median is the one place it lets you. A snake that
+       punishes standing on the median takes the level's only breath away. */
+    rules: { ice: true, snakesHunt: false } },
 
   { name: 'Orbital Traffic',
     blurb: 'no air, no mercy. the tightest river yet.',  kind: 'cross',  env: 'space',
@@ -351,6 +354,35 @@ const HELI = {
   enemyShotSpeed: 210,
   heliLives: 3,         /* hits you can take before the mission ends */
 };
+
+/* --------------------------------------------------------------------------
+   SNAKES  ::  the median stops being a rest stop
+
+   A snake that only slides back and forth is just a car on a slower road, and
+   the median was still somewhere you could sit and think. These ones hunt.
+   Stand on the median near one and it coils, which is your warning, then it
+   strikes at you fast. Step away during the wind-up and it gives up.
+
+   The point is that the median becomes a place you pass through rather than a
+   place you wait, which is what the level was always advertising.
+   -------------------------------------------------------------------------- */
+
+const SNAKE = {
+  /* Whether snakes hunt at all. A level can say `snakesHunt: false` in its
+     rules to keep the old patrolling snake, and Deep Freeze does, because on
+     ice the median is the one square you are allowed to stop on. Taking that
+     away as well leaves the level with no safe beat anywhere in it. */
+  hunt: true,
+
+  senseRange: 3.6,    /* squares away it notices you standing on the median */
+  windUp: 0.55,       /* seconds coiled before it goes. this is your warning. */
+  strikeTime: 0.42,   /* how long the lunge lasts */
+  strikeSpeed: 4.2,   /* multiplier on its patrol speed while lunging */
+  restTime: 0.85,     /* it is slow and harmless-looking afterwards */
+  restSpeed: 0.35,    /* how slowly it slinks back off */
+  cooldown: 1.3,      /* before the same snake can wind up again */
+};
+
 
 /* --------------------------------------------------------------------------
    The one-off twists a 'cross' level can turn on with `rules`.

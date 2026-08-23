@@ -348,6 +348,14 @@ function twist(name) {
   return !!(r && r[name]);
 }
 
+/* Like twist, but for a rule a level can switch OFF as well as on, so an
+   explicit false has to survive rather than read the same as "not set". */
+function levelRule(name, fallback) {
+  const r = plan().rules;
+  if (!r || r[name] === undefined) return fallback;
+  return r[name];
+}
+
 /* Everything moves at the level's speed, nudged by the mode and by how many
    laps of the looping stretch we have done. */
 function speedMultiplier() {
@@ -714,6 +722,7 @@ function update(dt) {
       }
       updateBayHazard(dt);
       updateDives();
+      updateSnakes(dt);
       updateLady(dt);
       updateSlide(dt);
       checkLane(dt);
@@ -867,12 +876,118 @@ function moveObstacles(dt) {
   for (const lane of lanes) {
     if (!lane.obstacles.length || !laneActive(lane)) continue;
 
-    for (const ob of lane.obstacles) ob.x += ob.vx * step;
+    /* `|| 1` would be wrong here: a coiling snake sets speedScale to 0, and 0
+       is falsy, so it would slide along at full speed while pretending to be
+       frozen. Same trap as Number(null) being 0. */
+    for (const ob of lane.obstacles) {
+      const scale = ob.speedScale === undefined ? 1 : ob.speedScale;
+      ob.x += ob.vx * step * scale;
+    }
 
     if (lane.bounce) bounceLane(lane);
     else wrapLane(lane);
   }
 }
+
+/* ==========================================================================
+   Snakes
+   --------------------------------------------------------------------------
+   A snake sliding back and forth is a car on a slower road, and it left the
+   median as somewhere you could stop and plan. These hunt instead.
+
+     patrol   sliding along as before
+     coil     it has seen you. frozen, shaking, hissing. this is the warning.
+     strike   the lunge, several times patrol speed, aimed where you were
+     rest     slinking back, slow, while it gets its nerve back
+
+   Stepping off the median during the wind-up calls it off, so the level asks
+   one question over and over: is it worth another half second up here?
+   ========================================================================== */
+
+/* How fast each mood moves, as a multiple of the snake's patrol speed. The
+   mood and its speed are set together, deliberately: setting the speed inside
+   the case that follows leaves one frame where the snake is coiled and still
+   sliding, or lunging and still stopped. One frame is enough to see. */
+const SNAKE_SPEED = {
+  patrol: 1,
+  coil:   0,
+  strike: SNAKE.strikeSpeed,
+  rest:   SNAKE.restSpeed,
+};
+
+function snakeMood(ob, mood, time) {
+  ob.mood = mood;
+  ob.moodUntil = game.time + time;
+  ob.speedScale = SNAKE_SPEED[mood];
+}
+
+function updateSnakes(dt) {
+  if (!snakeLane || !laneActive(snakeLane)) return;
+  if (!levelRule('snakesHunt', SNAKE.hunt)) return;
+
+  const frog = game.frog;
+  const onMedian = !!frog && frog.row === snakeLane.row && game.state === 'play';
+  const centre = frog ? frog.x + GRID / 2 : 0;
+  const y = laneY(snakeLane.row);
+
+  for (const ob of snakeLane.obstacles) {
+    if (ob.patrolSpeed === undefined) ob.patrolSpeed = Math.abs(ob.vx);
+    if (!ob.mood) snakeMood(ob, 'patrol', 0);
+
+    const mid = ob.x + (ob.cells * GRID) / 2;
+    const gap = Math.abs(centre - mid) / GRID;
+
+    switch (ob.mood) {
+
+      case 'patrol': {
+        if (!onMedian) break;
+        if (game.time < (ob.readyAt || 0)) break;
+        if (gap > SNAKE.senseRange) break;
+        snakeMood(ob, 'coil', SNAKE.windUp);
+        Sound.play('hiss');
+        break;
+      }
+
+      case 'coil': {
+        /* Called off the moment you leave. The snake is guarding the median,
+           not chasing you across the board. */
+        if (!onMedian) {
+          snakeMood(ob, 'rest', SNAKE.restTime);
+          ob.readyAt = game.time + SNAKE.cooldown;
+          break;
+        }
+        /* Flecks coming off it while it winds up. */
+        if (Math.random() < dt * 40) {
+          spawnPuff(mid, y + GRID * 0.3, VENOM, 1, { rise: 34, spread: GRID });
+        }
+        if (game.time >= ob.moodUntil) {
+          ob.vx = Math.sign(centre - mid || 1) * ob.patrolSpeed;
+          snakeMood(ob, 'strike', SNAKE.strikeTime);
+          Sound.play('strike');
+        }
+        break;
+      }
+
+      case 'strike': {
+        if (game.time >= ob.moodUntil) {
+          snakeMood(ob, 'rest', SNAKE.restTime);
+          ob.readyAt = game.time + SNAKE.cooldown;
+        }
+        break;
+      }
+
+      default: {                                  /* rest */
+        if (game.time >= ob.moodUntil) snakeMood(ob, 'patrol', 0);
+        break;
+      }
+    }
+  }
+}
+
+/* What comes off a snake while it winds up. Same reasoning as the bubbles:
+   a fixed colour reads on every environment. */
+const VENOM = '#b6ff5a';
+
 
 /* Snakes turn round at the edges instead of wrapping. */
 function bounceLane(lane) {
@@ -2507,7 +2622,11 @@ function drawObstacles() {
       const art = Art.of(kind);
       const dive = rampage ? { sink: 0 } : diveState(lane, ob);
 
-      drawArt(ctx, art, ob.x, y, w, GRID, {
+      /* A coiling snake shakes on the spot. It is the only tell that reads at
+         a glance while you are busy watching the road. */
+      const shake = ob.mood === 'coil' ? (Math.random() - 0.5) * 5 : 0;
+
+      drawArt(ctx, art, ob.x + shake, y, w, GRID, {
         dir: Math.sign(ob.vx),
         cells: ob.cells,
         sink: dive.sink,
@@ -3659,6 +3778,7 @@ window.frogger = {
   advanceLevel, startBonusRound, inBonus, held, smashableLanes,
   startGame, startLevel, hop, laneY, diveState, divePhaseName, speedMultiplier,
   updateDives, spawnPuff, spawnRing, updateFx,
+  updateSnakes, SNAKE, snakeLane, levelRule,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };
 

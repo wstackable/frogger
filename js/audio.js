@@ -24,6 +24,10 @@ const SOUNDS = {
   tuck:   { wave: 'sine',     steps: [[300, 0.05], [240, 0.07]],                 gain: 0.06 },
   sink:   { wave: 'sine',     steps: [[240, 0.06], [150, 0.09], [90, 0.12]],     gain: 0.09, crunch: 0.10 },
 
+  /* --- snakes. the hiss is the wind-up, the strike is the lunge. --- */
+  hiss:   { wave: 'sawtooth', steps: [[1400, 0.05], [1150, 0.06], [900, 0.08]],  gain: 0.05, crunch: 0.14 },
+  strike: { wave: 'square',   steps: [[220, 0.03], [520, 0.04], [140, 0.10]],    gain: 0.13, crunch: 0.18 },
+
   /* --- the bonus round --- */
   smash:    { wave: 'sawtooth', steps: [[190, 0.05], [95, 0.09]],  gain: 0.20, crunch: 0.22 },
   bigsmash: { wave: 'square',   steps: [[300,0.04],[170,0.05],[90,0.13]], gain: 0.24, crunch: 0.38 },

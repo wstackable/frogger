@@ -53,6 +53,14 @@ function divePhaseAt(lane, ob, ahead = 0) {
   return "under";
 }
 
+/* How far a snake covers in one lunge. Used to work out how much of the
+   median a coiling snake has effectively claimed. */
+function strikeReach(ob) {
+  const patrol = ob.patrolSpeed === undefined ? Math.abs(ob.vx) : ob.patrolSpeed;
+  return patrol * api.SNAKE.strikeSpeed * api.SNAKE.strikeTime * 60 *
+         api.speedMultiplier();
+}
+
 /* Would standing at x in this road lane be safe for the next `n` frames? */
 function roadSafeFor(lane, x, n) {
   /* A lane the level has switched off still has obstacles sitting in it, they
@@ -61,8 +69,20 @@ function roadSafeFor(lane, x, n) {
   if (!lane.active) return true;
   const frogL = x + 7, frogR = x + GRID - 7;
   for (const ob of lane.obstacles) {
+    /* Snakes stopped being constant-speed traffic. One that is coiled or
+       already lunging will cover a lunge's worth of median in a moment, so
+       treat that whole stretch as taken. Projecting it like a car puts the
+       bot in the one place it should not be, which is how it went from five
+       frogs home on Deep Freeze to none. */
+    if (ob.mood === "coil" || ob.mood === "strike") {
+      const reach = strikeReach(ob);
+      if (frogL < ob.x + ob.cells * GRID + reach && frogR > ob.x - reach) return false;
+      continue;
+    }
+
+    const scale = ob.speedScale === undefined ? 1 : ob.speedScale;
     for (let f = 0; f <= n; f += 2) {
-      const ox = ob.x + travel(lane, f) * (ob.vx < 0 ? 1 : 1) * (ob.vx / lane.speed || 1);
+      const ox = ob.x + travel(lane, f) * scale * (ob.vx / lane.speed || 1);
       if (frogL < ox + ob.cells * GRID - 7 && frogR > ox + 7) return false;
     }
   }
@@ -433,7 +453,10 @@ for (const level of CROSS_LEVELS) {
   api.startGame(level);
   frames(1);
   const r = play(4500);
-  const twists = Object.keys(api.LEVELS[level - 1].rules || {}).join("+") || "-";
+  /* Only the rules that are switched ON. A level can turn one off, and
+     printing that as if it were active reads as the opposite of the truth. */
+  const rules = api.LEVELS[level - 1].rules || {};
+  const twists = Object.keys(rules).filter((k) => rules[k]).join("+") || "-";
   console.log(`     ${String(level).padStart(2)} ${api.levelName(level).padEnd(17)}` +
               `[${twists.padEnd(5)}] homes=${r.homes} deaths=${r.deaths}`);
   check(`level ${level} (${api.levelName(level)}) is crossable`, r.homes >= 1,

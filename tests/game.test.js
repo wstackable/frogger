@@ -1601,5 +1601,121 @@ check("the warning is quiet enough to live with", (() => {
 })());
 
 
+console.log("\n== the median stops being safe ==");
+
+const SNAKE_LEVEL = (() => {
+  const i = api.LEVELS.findIndex(
+    (l) => l.kind === "cross" && (l.hazards || []).includes("snake")
+  );
+  return i === -1 ? FULL_LEVEL : i + 1;
+})();
+
+/* Stand the frog on the median right next to a snake and hand back both. */
+function standOnMedian() {
+  api.startGame(SNAKE_LEVEL);
+  frames(1);
+  const lane = api.snakeLane;
+  if (!lane || !lane.active) return null;
+  const ob = lane.obstacles[0];
+  ob.mood = "patrol";
+  ob.moodUntil = 0;
+  ob.readyAt = 0;
+  game.frog.row = lane.row;
+  /* Close enough to be noticed, far enough not to be bitten on frame one,
+     which would end the level before any of this could be observed. */
+  const mid = ob.x + (ob.cells * GRID) / 2;
+  const want = mid + GRID * 2.5;
+  game.frog.x = want + GRID <= WIDTH ? want : mid - GRID * 2.5 - GRID;
+  return { lane, ob };
+}
+
+check("a snake coils when you loiter on the median", (() => {
+  const at = standOnMedian();
+  if (!at) return false;
+  for (let i = 0; i < 20 && at.ob.mood === "patrol"; i++) {
+    game.frog.row = at.lane.row;
+    frames(1);
+  }
+  return at.ob.mood === "coil";
+})());
+
+check("a coiling snake holds still, so the tell reads", (() => {
+  const at = standOnMedian();
+  if (!at) return false;
+  for (let i = 0; i < 20 && at.ob.mood !== "coil"; i++) {
+    game.frog.row = at.lane.row;
+    frames(1);
+  }
+  if (at.ob.mood !== "coil") return false;
+  const before = at.ob.x;
+  frames(5);
+  return Math.abs(at.ob.x - before) < 0.001;
+})());
+
+check("stepping off the median calls it off", (() => {
+  const at = standOnMedian();
+  if (!at) return false;
+  for (let i = 0; i < 20 && at.ob.mood !== "coil"; i++) {
+    game.frog.row = at.lane.row;
+    frames(1);
+  }
+  if (at.ob.mood !== "coil") return false;
+  game.frog.row = at.lane.row - 1;        /* hopped on into the road */
+  frames(2);
+  return at.ob.mood !== "coil" && at.ob.mood !== "strike";
+})());
+
+check("the strike is faster than the patrol", (() => {
+  const at = standOnMedian();
+  if (!at) return false;
+  for (let i = 0; i < 90 && at.ob.mood !== "strike"; i++) {
+    game.frog.row = at.lane.row;
+    frames(1);
+  }
+  return at.ob.mood === "strike" && at.ob.speedScale > 1;
+})());
+
+check("the wind-up is long enough to get out of the way", (() => {
+  /* A hop takes CONFIG.hopDuration ms. If the warning is shorter than a hop
+     there is nothing you could have done, and it stops being a warning. */
+  return api.SNAKE.windUp * 1000 > CONFIG.hopDuration * 2;
+})(), `windUp ${api.SNAKE.windUp}s vs hop ${CONFIG.hopDuration}ms`);
+
+check("a snake never hunts you off the median", (() => {
+  api.startGame(SNAKE_LEVEL);
+  frames(1);
+  const lane = api.snakeLane;
+  if (!lane || !lane.active) return false;
+  lane.obstacles.forEach((o) => { o.mood = "patrol"; o.readyAt = 0; });
+  game.frog.row = lane.row - 1;
+  for (let i = 0; i < 120; i++) { game.frog.row = lane.row - 1; frames(1); }
+  return lane.obstacles.every((o) => o.mood === "patrol");
+})());
+
+
+check("a level can keep the old patrolling snake", (() => {
+  const off = api.LEVELS.findIndex((l) => l.rules && l.rules.snakesHunt === false);
+  if (off === -1) return false;
+  api.startGame(off + 1);
+  frames(1);
+  const lane = api.snakeLane;
+  if (!lane || !lane.active) return false;
+  lane.obstacles.forEach((o) => { o.mood = "patrol"; o.readyAt = 0; });
+  /* Stand right next to one for a good while. Nothing should wind up. */
+  const ob = lane.obstacles[0];
+  game.frog.x = Math.min(WIDTH - GRID, ob.x + ob.cells * GRID + GRID);
+  for (let i = 0; i < 120; i++) { game.frog.row = lane.row; frames(1); }
+  return lane.obstacles.every((o) => o.mood === "patrol");
+})());
+
+check("an explicit false in a level's rules is not read as unset", (() => {
+  const off = api.LEVELS.findIndex((l) => l.rules && l.rules.snakesHunt === false);
+  if (off === -1) return false;
+  game.level = off + 1;
+  return api.levelRule("snakesHunt", true) === false &&
+         api.levelRule("noSuchRule", "fallback") === "fallback";
+})());
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);
