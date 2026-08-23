@@ -339,6 +339,11 @@ const ROCKET = {
   boost: 1.55,        /* climb multiplier with the booster lit */
   coast: 0.42,        /* and with it off */
   fuel: 2.3,          /* seconds of booster per rocket */
+
+  /* How long you get to read SHOT DOWN before the next rocket will go. You
+     also have to let go of UP first. Both matter now that UP is the throttle
+     and people hold it down rather than tapping it. */
+  relaunchPause: 0.9,
 };
 
 const HELI = {
@@ -438,6 +443,60 @@ const SNAKE = {
   restTime: 0.85,     /* it is slow and harmless-looking afterwards */
   restSpeed: 0.35,    /* how slowly it slinks back off */
   cooldown: 1.3,      /* before the same snake can wind up again */
+};
+
+
+/* ==========================================================================
+   1h. THE SPEEDBOAT BOSS  ::  first person, down the river
+
+   The only level that does not sit on the top-down grid. You are behind the
+   boat rather than above it, looking down a river that recedes to a horizon,
+   and everything in the water rushes up at you as it gets closer.
+
+   It is a chase. The boss boat is ahead of you and it does not want to be
+   caught: it weaves, and it drops mines behind it. Ramming its stern is the
+   only thing that hurts it, and the throttle is how you close the gap, which
+   makes it the same verb the rocket teaches, asked a different way.
+
+   World units: z is distance ahead of you, x is across the river, where 0 is
+   the middle and the banks are at plus and minus riverHalf.
+   ========================================================================== */
+
+const BOAT = {
+  /* --- the river --- */
+  riverHalf: 1.0,     /* how wide the water is either side of the middle */
+  depth:     22,      /* how far up the river you can see */
+  horizon:   0.32,    /* where the skyline sits, down the playfield */
+  camera:    2.2,     /* camera height. bigger makes things rush up slower. */
+  spread:    1.5,     /* how wide the near bank is on screen, in screen halves */
+
+  /* --- your boat --- */
+  hull:      5,       /* hits you can take before the run is over */
+  steer:     2.3,     /* how fast you swing across the river */
+  cruise:    9.5,     /* world units a second at rest on the throttle */
+  boost:     1.85,    /* multiplier with the throttle down */
+  boostFuel: 3.4,     /* seconds of it */
+  refill:    0.5,     /* seconds of throttle recovered per second off it */
+  grace:     1.1,     /* seconds you cannot be hit again after being hit */
+
+  /* --- the boss --- */
+  bossHits:  6,       /* rams it takes */
+  bossGap:   7.5,     /* how far ahead it starts, and retreats to after a ram */
+  bossWeave: 0.7,     /* how fast it swings across the river */
+  bossRange: 0.72,    /* and how far, as a fraction of the river */
+  bossRun:   2.4,     /* how hard it pulls away when you are close */
+  ramRange:  1.1,     /* how close counts as a ram */
+
+  /* --- what it drops --- */
+  mineEvery: 0.9,     /* seconds between mines */
+  mineHalf:  0.30,    /* how wide a mine is, in world units */
+
+  /* --- pacing --- */
+  duration:   90,     /* seconds before the river runs out */
+  introTime: 3.2,
+  resultsTime: 4.2,
+
+  points: { ram: 400, win: 3000 },
 };
 
 

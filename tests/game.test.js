@@ -146,7 +146,7 @@ check("bays reset", game.bays.every(b => !b), JSON.stringify(game.bays));
 /* The next level might be a bonus round rather than a crossing, which is the
    whole point of the level plan. */
 check("the next level started",
-  ["play", "bonusIntro", "heliIntro", "rocketIntro"].includes(game.state), game.state);
+  ["play", "bonusIntro", "heliIntro", "rocketIntro", "boatIntro"].includes(game.state), game.state);
 
 console.log("\n== timer ==");
 reset();
@@ -1164,7 +1164,7 @@ for (let n = 1; n <= L.length; n++) {
   try {
     api.startGame(n);
     frames(3);
-    const ok = ["play", "bonusIntro", "heliIntro", "rocketIntro"].includes(game.state);
+    const ok = ["play", "bonusIntro", "heliIntro", "rocketIntro", "boatIntro"].includes(game.state);
     if (!ok) startProblems.push(`${n} ${L[n - 1].name}: state ${game.state}`);
     if (!lanes.some(l => l.obstacles.length)) {
       startProblems.push(`${n} ${L[n - 1].name}: empty board`);
@@ -2030,6 +2030,67 @@ check("the booster refills for the next rocket", (() => {
 
 check("coasting is slower than the old fixed climb, burning is faster", (() => {
   return api.ROCKET.coast < 1 && api.ROCKET.boost > 1;
+})());
+
+
+console.log("\n== the pad does not fire itself ==");
+
+/* Will launched, was shot down, and the level was over. UP is the throttle
+   now, so it gets held rather than tapped, and the pad was relaunching on the
+   very next frame with the key still down: three rockets gone in a blink. */
+check("being shot down while holding UP does not fire the next one", (() => {
+  api.startGame(ROCKET_LEVEL);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  api.held.up = false;
+  frames(2);
+  api.held.up = true;
+  frames(3);
+  if (!api.rocket.flying) { api.held.up = false; return false; }
+
+  const left = api.rocket.attemptsLeft;
+  api.crashRocket();
+  frames(10);                       /* still holding UP the whole time */
+  const stillHeld = api.rocket.attemptsLeft === left && !api.rocket.flying;
+  api.held.up = false;
+  return stillHeld;
+})(), `attempts ${api.rocket.attemptsLeft} flying ${api.rocket.flying}`);
+
+check("and it does go again once you let go and wait", (() => {
+  api.held.up = false;
+  frames(Math.ceil(api.ROCKET.relaunchPause * 60) + 6);
+  const left = api.rocket.attemptsLeft;
+  api.held.up = true;
+  frames(3);
+  api.held.up = false;
+  return api.rocket.flying && api.rocket.attemptsLeft === left - 1;
+})(), `flying ${api.rocket.flying} attempts ${api.rocket.attemptsLeft}`);
+
+check("letting go is not enough on its own, you get to read the outcome", (() => {
+  api.startGame(ROCKET_LEVEL);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  api.held.up = false;
+  frames(2);
+  api.held.up = true;
+  frames(3);
+  api.held.up = false;
+  api.crashRocket();
+  frames(2);
+  const left = api.rocket.attemptsLeft;
+  api.held.up = true;
+  frames(2);
+  const heldOff = !api.rocket.flying && api.rocket.attemptsLeft === left;
+  api.held.up = false;
+  return heldOff;
+})());
+
+check("the first rocket of the level goes without waiting", (() => {
+  api.startGame(ROCKET_LEVEL);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 3);
+  api.held.up = true;
+  frames(3);
+  const off = api.rocket.flying;
+  api.held.up = false;
+  return off;
 })());
 
 

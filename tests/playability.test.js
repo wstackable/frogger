@@ -29,7 +29,8 @@ const CROSS_LEVELS = api.LEVELS
 
 const SPECIAL_STATES = ["bonusIntro", "bonus", "bonusResults",
                         "heliIntro", "heli", "heliResults",
-                        "rocketIntro", "rocket", "rocketResults"];
+                        "rocketIntro", "rocket", "rocketResults",
+                        "boatIntro", "boat", "boatResults"];
 
 const DT = 1 / 60;
 
@@ -327,7 +328,11 @@ const KEY_FOR = {
    against a player rather than guessed at. */
 const REPORT = { lowTank: Infinity, grabbed: 0 };
 
-function play(maxFrames) {
+/* `hold` pins the run to one level, restarting it rather than letting the bot
+   walk on into the next. Without it a sample of "the hardest level" is really
+   a sample of that level plus everything after it, which stopped being true
+   the moment the last level became a boss run the bot sits out. */
+function play(maxFrames, hold) {
   const stats = { homes: 0, deaths: 0, levels: 0, byReason: {}, byRow: {} };
   REPORT.lowTank = Infinity;
   REPORT.grabbed = 0;
@@ -357,6 +362,10 @@ function play(maxFrames) {
       if (game.state === "bonus") api.bonus.timeLeft = 0.02;
       if (game.state === "heli") api.heli.timeLeft = 0.02;
       if (game.state === "rocket") api.rocket.attemptsLeft = 0;
+      /* The boss run is not a crossing, so skip it the same way. Losing it
+         costs a frog, so hand it the win rather than quietly draining lives
+         out of the run this suite is trying to measure. */
+      if (game.state === "boat") { api.boat.won = true; api.finishBoat(); }
       game.stateTime = 99;
       frames(1);
       continue;
@@ -386,6 +395,15 @@ function play(maxFrames) {
       if (rowNow !== null) stats.byRow[rowNow] = (stats.byRow[rowNow] || 0) + 1;
     }
     wasDying = dying;
+
+    if (hold && game.level !== hold && game.state !== "dying") {
+      stats.levels++;
+      api.startGame(hold);
+      frames(1);
+      prevHomes = 0;
+      prevLevel = game.level;
+      continue;
+    }
 
     const homes = game.bays.filter(Boolean).length;
     if (game.level > prevLevel) { stats.levels++; prevHomes = 0; }
@@ -472,7 +490,7 @@ for (const n of [CROSS_LEVELS[0], CROSS_LEVELS[Math.floor(CROSS_LEVELS.length / 
                  CROSS_LEVELS[CROSS_LEVELS.length - 1]]) {
   api.startGame(n);
   frames(1);
-  const r = play(5000);
+  const r = play(5000, n);
   runs.push({ n, name: api.levelName(n), ...r });
   console.log(`     level ${n} ${api.levelName(n)}: homes=${r.homes} deaths=${r.deaths} ` +
               `reasons=${JSON.stringify(r.byReason)}`);

@@ -24,6 +24,11 @@ const SOUNDS = {
   tuck:   { wave: 'sine',     steps: [[300, 0.05], [240, 0.07]],                 gain: 0.06 },
   sink:   { wave: 'sine',     steps: [[240, 0.06], [150, 0.09], [90, 0.12]],     gain: 0.09, crunch: 0.10 },
 
+  /* --- the speedboat boss --- */
+  ram:    { wave: 'sawtooth', steps: [[150, 0.05], [90, 0.09], [60, 0.16]],     gain: 0.24, crunch: 0.5 },
+  mine:   { wave: 'square',   steps: [[300, 0.05], [140, 0.09], [70, 0.18]],    gain: 0.22, crunch: 0.42 },
+  wake:   { wave: 'sine',     steps: [[380, 0.05], [230, 0.08]],                gain: 0.08, crunch: 0.18 },
+
   /* --- a lungful of air on the airless levels --- */
   breath: { wave: 'sine',     steps: [[520, 0.06], [780, 0.07], [1040, 0.12]],   gain: 0.13 },
 
@@ -190,6 +195,19 @@ const ENGINE_PROFILES = {
     hissVol: 0.10,                     /* plenty of air */
     glide:   0.20,
     wave: 'triangle', subWave: 'sine',
+  },
+
+  /* A big outboard sitting low in the water: slow lumpy chug like the truck,
+     but with a lot more hiss under it, because half of what you hear from a
+     speedboat is the water it is throwing. */
+  boat: {
+    idleHz:   42,   fullHz:  120,
+    idleCut: 600,   fullCut: 3400,
+    idleChug:  9,   fullChug:  16,
+    idleVol: 0.11,  fullVol:  0.25,
+    hissVol: 0.22,                     /* the wash */
+    glide:   0.16,
+    wave: 'sawtooth', subWave: 'sine',
   },
 
   rocket: {
