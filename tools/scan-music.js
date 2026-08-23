@@ -35,7 +35,13 @@ function displayName(fileName) {
   let n = fileName.replace(/\.[^.]+$/, "");
   const dash = n.indexOf(" - ");
   if (dash > 0 && dash < 30) n = n.slice(dash + 3);
-  return n.trim();
+  n = n.trim();
+  /* "boneyard.mp3" reads badly next to "Ninja Boogie", so title-case anything
+     that arrived all in lower case. Names with capitals are left alone. */
+  if (n === n.toLowerCase()) {
+    n = n.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  }
+  return n;
 }
 
 const found = [];

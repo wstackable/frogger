@@ -300,6 +300,7 @@ function startGame() {
 }
 
 function startLevel() {
+  calmDown();
   game.bays = CONFIG.homeCols.map(() => false);
   game.bayHazard = null;
   game.lady = null;
@@ -851,6 +852,17 @@ function endBonusRound() {
   for (const lane of lanes) for (const ob of lane.obstacles) ob.deadUntil = 0;
   game.bonusTotal = bonus.points;
   addScore(bonus.points);
+  calmDown();
+}
+
+/* Put the screen back how we found it. Called when the rampage ends and again
+   whenever a level starts, because a shake left running is very obvious and
+   there is no reason to risk it. */
+function calmDown() {
+  bonus.shake = 0;
+  bonus.flash = 0;
+  bonus.particles.length = 0;
+  bonus.floats.length = 0;
 }
 
 /* What is this thing worth? */
@@ -901,9 +913,6 @@ function updateBonus(dt) {
   }
 
   /* --- effects --- */
-  bonus.shake = Math.max(0, bonus.shake - dt * 40);
-  bonus.flash = Math.max(0, bonus.flash - dt * 3.5);
-
   for (let i = bonus.particles.length - 1; i >= 0; i--) {
     const p = bonus.particles[i];
     p.life -= dt;
@@ -1962,7 +1971,10 @@ function loop(now) {
   if (!game.paused) update(dt);
   else game.time += dt;
 
-  Music.pump();
+  /* Shake and flash are drawn in every state, so they have to fade in every
+     state too. */
+  bonus.shake = Math.max(0, bonus.shake - dt * 40);
+  bonus.flash = Math.max(0, bonus.flash - dt * 3.5);
 
   /* Revs follow the pedal. Off the pedal it drops back to a lumpy idle. */
   if (Engine.running) {
@@ -1982,7 +1994,7 @@ requestAnimationFrame(loop);
 /* For poking at the game from the browser console, and for the tests. */
 window.frogger = {
   game, lanes, CONFIG, PROGRESSION, SPRITES, PALETTE, THEMES, PALETTES,
-  Music, Art, notify, TRACKS, DEATH_HINTS, overlayFor, noteFreq,
+  Music, Art, notify, TRACKS, DEATH_HINTS, overlayFor,
   MODES, BONUS, bonus, mode, setting, rule, cycleMode, isBonusLevel, Engine, ENGINE,
   advanceLevel, startBonusRound, inBonus, held, smashableLanes,
   startGame, startLevel, hop, laneY, diveState, speedMultiplier,

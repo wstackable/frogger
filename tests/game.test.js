@@ -415,50 +415,45 @@ check("there are sprites for everything the arcade theme names",
    The radio and the colour palettes
    ========================================================================== */
 
-console.log("\n== the music is well formed ==");
+console.log("\n== the radio ==");
 const { Music, Art, PALETTES } = api;
 
-check("there are tracks", Music.trackName().length > 0);
+const HAS_EXT = /\.(m4a|mp3|ogg|wav|aac|opus)$/i;
+const SAFARI_SHY = /\.(ogg|opus)$/i;
 
-let musicProblems = [];
-const writtenTracks = api.TRACKS.filter(t => !t.file);
-const fileTracks = api.TRACKS.filter(t => t.file);
-
-check("there are music files in the list", fileTracks.length > 0, String(fileTracks.length));
-check("every file track has a name and a path",
-  fileTracks.every(t => t.name && /^music\/.+\.(m4a|mp3|ogg|wav|aac|opus)$/i.test(t.file)),
-  fileTracks.filter(t => !t.name || !/^music\//.test(t.file || "")).map(t => t.file).join(", "));
-check("no file track uses a format Safari cannot play",
-  fileTracks.every(t => !/\.(ogg|opus)$/i.test(t.file)),
-  fileTracks.filter(t => /\.(ogg|opus)$/i.test(t.file)).map(t => t.file).slice(0, 4).join(", "));
-check("there are written-out tunes too", writtenTracks.length > 0);
-
-for (const t of writtenTracks) {
-  if (!t.name) musicProblems.push("a track has no name");
-  if (!t.bpm || t.bpm < 40 || t.bpm > 300) musicProblems.push(`${t.name}: odd bpm ${t.bpm}`);
-  for (const voice of ["lead", "bass", "drum"]) {
-    const toks = String(t[voice] || "").trim().split(/\s+/).filter(Boolean);
-    if (!toks.length) { musicProblems.push(`${t.name}: empty ${voice}`); continue; }
-    for (const tok of toks) {
-      if (tok === "." || tok === "-") continue;
-      if (voice === "drum") {
-        if (!["x", "h", "s"].includes(tok)) musicProblems.push(`${t.name} drum: "${tok}"`);
-      } else if (!/^[a-g](#|b)?-?\d$/.test(tok)) {
-        musicProblems.push(`${t.name} ${voice}: "${tok}" is not a note`);
-      }
-    }
-    /* A pattern must not open with a hold, since there is nothing to hold. */
-    if (toks[0] === "-") musicProblems.push(`${t.name} ${voice} starts with a hold`);
-  }
-}
-check("every note, rest and drum hit is valid", musicProblems.length === 0,
-  musicProblems.slice(0, 6).join(" | "));
+check("there are tracks", api.TRACKS.length > 0, String(api.TRACKS.length));
+check("every track is a file in music/",
+  api.TRACKS.every(t => typeof t.file === "string" && t.file.startsWith("music/")),
+  api.TRACKS.filter(t => !t.file || !String(t.file).startsWith("music/"))
+    .map(t => t.name).join(", "));
+check("no leftover generated tunes",
+  api.TRACKS.every(t => !t.lead && !t.bass && !t.drum && !t.bpm),
+  api.TRACKS.filter(t => t.lead || t.bpm).map(t => t.name).join(", "));
+check("every track has a name",
+  api.TRACKS.every(t => typeof t.name === "string" && t.name.length > 0));
+check("every path looks like an audio file",
+  api.TRACKS.every(t => HAS_EXT.test(t.file)),
+  api.TRACKS.filter(t => !HAS_EXT.test(t.file)).map(t => t.file).join(", "));
+check("nothing Safari cannot play",
+  api.TRACKS.every(t => !SAFARI_SHY.test(t.file)),
+  api.TRACKS.filter(t => SAFARI_SHY.test(t.file)).map(t => t.file).join(", "));
+check("no track sits in a subfolder, since the scanner ignores those",
+  api.TRACKS.every(t => t.file.split("/").length === 2),
+  api.TRACKS.filter(t => t.file.split("/").length !== 2).map(t => t.file).join(", "));
+check("no duplicate names, or R would look stuck",
+  new Set(api.TRACKS.map(t => t.name)).size === api.TRACKS.length);
 
 check("R moves to the next track", (() => {
   const first = Music.trackName();
   Music.next();
   const second = Music.trackName();
   return api.TRACKS.length === 1 || first !== second;
+})());
+
+check("R wraps round the end of the list", (() => {
+  Music.index = api.TRACKS.length - 1;
+  Music.next();
+  return Music.index === 0;
 })());
 
 check("M toggles the music off and on again", (() => {
@@ -544,73 +539,6 @@ check("the title screen still gets an overlay", (() => {
   game.paused = false;
   return api.overlayFor() === "title";
 })());
-
-
-console.log("\n== the music scheduler really plays the tune ==");
-
-/* Yankee Doodle: c5 c5 d5 e5 c5 e5 d5 - ... */
-api.Music.enabled = true;
-CONFIG.music = true;
-api.Music.index = api.TRACKS.findIndex(t => t.name === "Yankee Doodle");
-api.Music.stop();
-audio.reset();
-api.Music.start();
-check("starting the music opens an audio context", !!api.Music._ctx);
-check("the music reports itself as playing", api.Music.playing === true);
-
-/* Walk the clock forward through two bars and collect what got scheduled. */
-for (let i = 0; i < 40; i++) audio.advanceAudio(0.1);
-
-const notes = audio.scheduled.filter(e => e.kind === "osc");
-const drums = audio.scheduled.filter(e => e.kind === "noise");
-check("notes were scheduled", notes.length > 20, String(notes.length));
-check("drum hits were scheduled", drums.length > 5, String(drums.length));
-
-/* The lead is a square wave; check the first few pitches are the tune. */
-const lead = notes.filter(n => n.type === "square").sort((a, b) => a.when - b.when);
-const wantNotes = ["c5", "c5", "d5", "e5", "c5", "e5", "d5"].map(api.noteFreq);
-const got = lead.slice(0, wantNotes.length).map(n => n.freq);
-check("the melody comes out as the notes that were written",
-  got.every((f, i) => Math.abs(f - wantNotes[i]) < 0.5),
-  `wanted ${wantNotes.map(f => f.toFixed(0))} got ${got.map(f => f.toFixed(0))}`);
-
-check("notes are scheduled in time order, none in the past",
-  lead.every((n, i) => i === 0 || n.when >= lead[i - 1].when));
-
-/* Beats should be spaced by the track's tempo, not bunched up. */
-const bpm = api.TRACKS[api.Music.index].bpm;
-const beatDur = 60 / bpm / 2;
-const gaps = [];
-for (let i = 1; i < Math.min(lead.length, 8); i++) gaps.push(lead[i].when - lead[i - 1].when);
-/* Every gap should be a whole number of beats: one beat normally, two where
-   the melody holds a note. Comparing the ratio avoids float modulo grief. */
-check("the spacing between notes matches the tempo",
-  gaps.every(g => {
-    const beats = g / beatDur;
-    return beats >= 0.98 && Math.abs(beats - Math.round(beats)) < 0.02;
-  }),
-  `beat=${beatDur.toFixed(3)}s gaps=${gaps.map(g => (g / beatDur).toFixed(2) + " beats")}`);
-
-/* The pattern must loop rather than stop at the end. */
-const beforeLoop = api.Music._beat;
-for (let i = 0; i < 60; i++) audio.advanceAudio(0.1);
-check("the tune keeps looping", api.Music._beat > beforeLoop + 20,
-  `${beforeLoop} -> ${api.Music._beat}`);
-
-check("muting stops the scheduler", (() => {
-  api.Music.toggle();
-  const stopped = api.Music.playing === false;
-  api.Music.toggle();
-  return stopped;
-})());
-
-console.log("\n== changing track changes the tune ==");
-audio.reset();
-api.Music.next();
-for (let i = 0; i < 20; i++) audio.advanceAudio(0.1);
-check("the new track schedules its own notes",
-  audio.scheduled.filter(e => e.kind === "osc").length > 10);
-api.Music.stop();
 
 
 /* ==========================================================================
@@ -926,7 +854,9 @@ check("the engine stays quiet if sound is switched off", (() => {
 console.log("\n== the rampage borrows the radio ==");
 const bonusTrackName = api.BONUS.music;
 check("the bonus track exists in the radio",
-  api.TRACKS.some(t => t.name === bonusTrackName), bonusTrackName);
+  api.TRACKS.some(t => t.name === bonusTrackName),
+  `BONUS.music is "${bonusTrackName}" but the radio has: ` +
+  api.TRACKS.map(t => t.name).join(", "));
 
 Music.enabled = true;
 CONFIG.music = true;
@@ -969,6 +899,61 @@ check("borrowing the radio does not overwrite the saved track", (() => {
 
 Music.stop();
 CONFIG.music = false;
+
+
+console.log("\n== the screen settles down after the rampage ==");
+CONFIG.sound = true;
+relax();
+reset();
+game.level = B.firstLevel - 1;
+api.advanceLevel();
+frames(Math.ceil(B.introTime * 60) + 5);
+
+/* Get a proper shake going. */
+api.bonus.y = api.laneY(api.smashableLanes()[0].row);
+for (let i = 0; i < 240 && api.bonus.shake === 0; i++) frames(1);
+check("smashing shakes the screen", api.bonus.shake > 0, String(api.bonus.shake));
+
+/* End the round mid-shake, which is exactly how it goes wrong. */
+api.bonus.shake = 11;
+api.bonus.flash = 0.5;
+api.bonus.timeLeft = 0.01;
+frames(2);
+check("the round ended", game.state === "bonusResults", game.state);
+check("the shake is cleared the moment it ends", api.bonus.shake === 0,
+  String(api.bonus.shake));
+check("so is the flash", api.bonus.flash === 0, String(api.bonus.flash));
+
+/* And it must not creep back during the tally or afterwards. */
+for (let i = 0; i < Math.ceil(B.resultsTime * 60) + 30; i++) frames(1);
+check("play resumed", game.state === "play", game.state);
+check("no shake left in normal play", api.bonus.shake === 0, String(api.bonus.shake));
+check("no flash left in normal play", api.bonus.flash === 0, String(api.bonus.flash));
+check("no debris left over", api.bonus.particles.length === 0,
+  String(api.bonus.particles.length));
+
+check("a stray shake fades out on its own even outside the bonus round", (() => {
+  api.bonus.shake = 10;
+  api.bonus.flash = 0.5;
+  frames(40);                      /* two thirds of a second */
+  return api.bonus.shake === 0 && api.bonus.flash === 0;
+})(), `shake ${api.bonus.shake} flash ${api.bonus.flash}`);
+
+check("it fades while paused too, rather than freezing mid-judder", (() => {
+  api.bonus.shake = 10;
+  game.paused = true;
+  frames(40);
+  const settled = api.bonus.shake === 0;
+  game.paused = false;
+  return settled;
+})());
+
+check("starting a level calms everything down", (() => {
+  api.bonus.shake = 8;
+  api.bonus.particles.push({ x: 1, y: 1, vx: 0, vy: 0, life: 9, size: 2, color: "#fff" });
+  api.startLevel();
+  return api.bonus.shake === 0 && api.bonus.particles.length === 0;
+})());
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

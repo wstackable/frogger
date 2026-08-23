@@ -169,12 +169,11 @@ export async function load() {
     for (const l of listeners.keydown || []) l.fn({ key: k, preventDefault: noop });
   }
 
-  /* Move the audio clock forward and let the music scheduler catch up. */
+  /* Move the fake audio clock forward. The engine reads it for its rev
+     blips, so tests that care about timing can nudge it. */
   function advanceAudio(seconds) {
-    const ctx = api.Music && api.Music._ctx;
-    if (!ctx) return;
-    ctx.currentTime += seconds;
-    api.Music.pump();
+    const ctx = api.Engine && api.Engine._ctx;
+    if (ctx) ctx.currentTime += seconds;
   }
 
   return {

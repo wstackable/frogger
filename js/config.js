@@ -158,7 +158,7 @@ const BONUS = {
 
   /* The radio switches to this for the rampage, then goes back to whatever
      was playing before. Must match a name in js/music.js. */
-  music: 'Box Jump',
+  music: 'Box Jumping',
 
   /* What each thing is worth when you flatten it. */
   points: { car: 100, truck: 250, boat: 150 },

@@ -102,54 +102,37 @@ On a Mac, **Ctrl + Cmd + Space** opens the emoji picker.
 To make a brand new theme, copy either block in `THEMES`, give it a new name,
 and set `theme:` to that name.
 
-## Level 3b: write your own tune
+## Level 3b: change the music
 
-Open **`js/music.js`**. Every tune is written out as text, one note per beat.
-
-```js
-{
-  name: 'Hop To It',
-  bpm: 132,                              // how fast. 100 slow, 170 frantic.
-  lead: 'e5 .  g5 .  a5 -  g5 e5',       // the melody
-  bass: 'a2 -  a3 -  a2 -  a3 -',        // the low part
-  drum: 'x  .  h  .  x  .  h  h',        // x kick, h hi-hat, s snare
-},
-```
-
-- a note is a letter, an optional `#`, and an octave: `c4`, `f#3`, `a5`
-- `-` holds the note before it for another beat
-- `.` is silence
-- bigger octave number, higher note. `c4` is middle C.
-
-Press **R** in the game to skip to the next track, so you can jump straight to
-the one you are working on. Press **M** to mute.
-
-**Adding audio files instead.** Drop them into `music/` and run:
+Everything in the `music/` folder is in the radio. To change what plays, put
+files in that folder and run:
 
 ```bash
 deno task music
 ```
 
-That rewrites the list of files at the top of `js/music.js` for you. Do not
-hand-edit between the `MUSIC-FILES` markers, because the next run will
-overwrite it.
+That rewrites the track list at the top of `js/music.js`. Do not hand-edit
+between the `MUSIC-FILES` markers, because the next run overwrites it.
+
+Only the **top level** of `music/` is scanned. So you can drop a whole pack of
+fifty tracks into `music/big-pack/` and pick the good ones out by moving them
+up a level, without deleting anything.
 
 Use **.m4a** or **.mp3**. Safari and iOS cannot play `.ogg` at all, so an
-ogg-only track means silence on an iPad. If you have ogg files, convert them:
+ogg-only track is silence on an iPad. If you have ogg files, convert them:
 
 ```bash
 cd music && for f in *.ogg; do ffmpeg -i "$f" -c:a aac -b:a 128k "${f%.ogg}.m4a" && rm "$f"; done
 ```
 
-The scanner will warn you if it finds any it is worried about.
+The scanner warns you if it finds any it is worried about.
 
-**A trick that always works:** pick five notes and only use those. `c d e g a`
-in any order sounds cheerful. `a c d e g` sounds a bit spooky. You genuinely
-cannot play a wrong note.
+The name shown in the game comes from the filename, with any `Artist - ` prefix
+stripped. So `Three Red Hearts - Box Jump.m4a` shows up as `Box Jump`.
 
-Two of the tunes, *Yankee Doodle* and *Camptown Races*, are ones the real
-arcade machine played. The famous Frogger jingle is a Japanese children's song
-that is still in copyright, which is why it is not in here.
+The bonus round uses one specific track, named in `BONUS.music` in
+`js/config.js`. If you rename that file, update that line too, or the game
+falls back to whatever was already playing.
 
 ## Level 3c: add a colour palette
 
@@ -374,7 +357,6 @@ first tells you if you broke a rule. The second tells you if you broke the
 | Your PNG does not appear | Wrong filename or folder. The console says which file it could not load. Capital letters matter. |
 | The frog dies instantly | You probably gave the bottom row a `'road'` or `'river'` type. The last row should be `'start'`. |
 | No music | Click or press a key first: browsers will not play sound until you have touched the page. Then check `music: true` in config.js and that M has not muted it. |
-| A tune sounds wrong | A note name it did not understand is silently skipped. Check for typos like `h5` or `c` with no octave number. |
 | A track is silent on an iPad | It is probably a `.ogg`. Convert it to `.m4a`, see Level 3b. |
 | A new music file does not appear | Run `deno task music` to rebuild the list. |
 | The river becomes impossible | Two river rows next to each other flowing the same way. See the note in Level 6. |

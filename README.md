@@ -74,11 +74,10 @@ the splat is enough to teach the rule that catches everybody: on the river you
 have to be standing on something.
 
 **A radio and a colour switcher**, same controls as Phoenix 89. **R** changes
-track, **M** mutes, **C** cycles the colour palette. It plays whatever is in
-`music/`, plus five tunes written out as notes in the source and generated in
-the browser. Two of those, *Yankee Doodle* and *Camptown Races*, are tunes the
-actual cabinet played. The bonus round borrows the radio for its own track and
-hands it back afterwards.
+track, **M** mutes, **C** cycles the colour palette. It plays whatever audio is
+sitting in `music/`: drop files in, run `deno task music`, and they are in the
+rotation. The bonus round borrows the radio for its own track and hands it back
+afterwards.
 
 Plus lives, a 30 second timer, a high score that sticks, pause, keyboard,
 swipe, on-screen buttons on phones, and sound effects with no audio files.
@@ -107,8 +106,8 @@ index.html          the page. loads the six scripts in order.
 css/style.css       the page around the game (the game itself is a canvas)
 js/config.js    ←   START HERE. rules, board, difficulty, themes, palettes.
 js/sprites.js   ←   THE PIXEL ART. every picture, drawn as letters.
-js/music.js     ←   THE TUNES. the track list, and notes you can edit.
-music/              the audio files themselves
+js/music.js         the radio. the track list is generated, see below.
+music/              the music. drop files here.
 js/render.js        turns art settings into pixels
 js/audio.js         the beeps, generated in code
 js/game.js          the engine: rules, collisions, scoring, the game loop
@@ -154,19 +153,10 @@ Night, Ice World and Candy ship with it; a new one is a block of hex codes.
 ```
 
 **Or add music.** Drop files into `music/` and run `deno task music`. That
-rewrites the track list for you, so you never hand-edit it. Use `.m4a` or
-`.mp3`: Safari and iOS will not play `.ogg`, and the scanner warns you if it
-finds any.
-
-**Or write your own tune from scratch.** One note per beat, `-` holds, `.`
-rests.
-
-```js
-{ name: 'Hop To It', bpm: 132,
-  lead: 'e5 .  g5 .  a5 -  g5 e5',
-  bass: 'a2 -  a3 -  a2 -  a3 -',
-  drum: 'x  .  h  .  x  .  h  h' },
-```
+rewrites the track list for you, so you never hand-edit it. Only the top level
+of `music/` is scanned, so a whole pack can sit in a subfolder and you promote
+tracks by moving them up. Use `.m4a` or `.mp3`: Safari and iOS will not play
+`.ogg`, and the scanner warns you if it finds any.
 
 **Or drop in your own drawings.** Draw a frog on paper, photograph it, save a
 PNG in `assets/`, and point one line at it.
@@ -254,11 +244,7 @@ Frogger is a trademark of Konami. This is a hobby reimplementation for
 learning, not affiliated with or endorsed by them, and none of the artwork is
 theirs.
 
-**Music.** *Box Jump* is from the *Three Red Hearts* pack by
-[Abstraction](https://abstractionmusic.com), released CC-0 through
-[Tallbeard Studios](https://tallbeard.itch.io/three-red-hearts-prepare-to-dev):
-no attribution required, but it deserves the credit. *Mountain Climbing*
-carries over from Phoenix 89. The remaining tracks in `music/` were added by
-the repository owner. The written-out tunes are in `js/music.js` and are ours.
+**Music.** The tracks in `music/` were supplied by the repository owner.
+*Mountain Climbing* carries over from Phoenix 89.
 
 The code is licensed under [CC0 1.0](LICENSE). Do whatever you like with it.
