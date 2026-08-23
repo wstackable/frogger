@@ -1,8 +1,16 @@
 /* ==========================================================================
    FROGGER  ::  music.js
    --------------------------------------------------------------------------
-   THE MUSIC. Chiptune, generated live in the browser, so there are no audio
-   files to download and nothing to load.
+   THE MUSIC. Two kinds of track share one radio:
+
+     FILE tracks    whatever is in the music/ folder. They stream when you
+                    pick them, so nothing is downloaded up front. The pack
+                    that ships with this is "Three Red Hearts" by Abstraction
+                    (abstractionmusic.com), released CC-0 through Tallbeard
+                    Studios, plus one track from Phoenix 89.
+     WRITTEN tracks chiptune generated live in the browser from the notes
+                    typed out below. No file, no download, and you can edit
+                    the tune itself.
 
    Press R while playing to change track. Press M to mute.
 
@@ -38,8 +46,55 @@
    copying a block: see WRITING YOUR OWN TUNE at the bottom of the file.
    -------------------------------------------------------------------------- */
 const TRACKS = [
+
+  /* ---------------------------------------------------------------------
+     Music files from the music/ folder.
+
+     This block is generated. Drop files into music/ and run:
+
+         deno task music
+
+     and it rewrites itself. Do not hand-edit between the markers.
+     --------------------------------------------------------------------- */
+
+  /* MUSIC-FILES:START -- rebuilt by `deno task music`, do not hand-edit */
+  { name: 'Box Jump',                  file: 'music/Chiptune Music Loops/Three Red Hearts - Box Jump.m4a' },
+  { name: 'Candy',                     file: 'music/Chiptune Music Loops/Three Red Hearts - Candy.m4a' },
+  { name: 'Connected',                 file: 'music/Chiptune Music Loops/Three Red Hearts - Connected.m4a' },
+  { name: 'Deep Blue',                 file: 'music/Chiptune Music Loops/Three Red Hearts - Deep Blue.m4a' },
+  { name: 'Go',                        file: 'music/Chiptune Music Loops/Three Red Hearts - Go.m4a' },
+  { name: 'Go (No Vocal)',             file: 'music/Chiptune Music Loops/Three Red Hearts - Go (No Vocal).m4a' },
+  { name: 'Modern Bits',               file: 'music/Chiptune Music Loops/Three Red Hearts - Modern Bits.m4a' },
+  { name: 'Mountain Climbing',         file: 'music/Mountain Climbing.mp3' },
+  { name: 'Out of Time',               file: 'music/Chiptune Music Loops/Three Red Hearts - Out of Time.m4a' },
+  { name: 'Penguin Town',              file: 'music/Chiptune Music Loops/Three Red Hearts - Penguin Town.m4a' },
+  { name: 'Penguins vs Rabbits',       file: 'music/Chiptune Music Loops/Three Red Hearts - Penguins vs Rabbits.m4a' },
+  { name: 'Penultimate',               file: 'music/Chiptune Music Loops/Three Red Hearts - Penultimate.m4a' },
+  { name: 'Pixel War 1',               file: 'music/Chiptune Music Loops/Three Red Hearts - Pixel War 1.m4a' },
+  { name: 'Pixel War 2',               file: 'music/Chiptune Music Loops/Three Red Hearts - Pixel War 2.m4a' },
+  { name: 'Princess Quest',            file: 'music/Chiptune Music Loops/Three Red Hearts - Princess Quest.m4a' },
+  { name: 'Princess Quest (No Boing)', file: 'music/Chiptune Music Loops/Three Red Hearts - Princess Quest (No Boing).m4a' },
+  { name: 'Puzzle Pieces',             file: 'music/Chiptune Music Loops/Three Red Hearts - Puzzle Pieces.m4a' },
+  { name: 'Rabbit Town',               file: 'music/Chiptune Music Loops/Three Red Hearts - Rabbit Town.m4a' },
+  { name: 'Rumble at the Gates',       file: 'music/Chiptune Music Loops/Three Red Hearts - Rumble at the Gates.m4a' },
+  { name: 'Sanctuary',                 file: 'music/Chiptune Music Loops/Three Red Hearts - Sanctuary.m4a' },
+  { name: 'Save the City',             file: 'music/Chiptune Music Loops/Three Red Hearts - Save the City.m4a' },
+  { name: 'Three Red Hearts',          file: 'music/Chiptune Music Loops/Three Red Hearts - Three Red Hearts.m4a' },
+  /* MUSIC-FILES:END */
+
+  /* ---------------------------------------------------------------------
+     Written-out tunes. These need no files at all: the notes below are
+     turned into sound in the browser.
+
+     The first two are genuinely from the arcade cabinet. Konami's soundtrack
+     was a medley of existing tunes, and these two are out of copyright:
+     "Yankee Doodle" (traditional) and "Camptown Races" (Stephen Foster,
+     1850). The famous opening jingle is a Japanese children's song, "Inu no
+     Omawarisan" (Yoshimi Sato, 1960), and the main theme is the opening of
+     the anime Araiguma Rascal. Both are still in copyright, so they are not
+     here. The home ports had to swap them out for the same reason.
+     --------------------------------------------------------------------- */
   {
-    /* Traditional. One of the tunes the cabinet actually played. */
     name: 'Yankee Doodle',
     bpm: 138,
     lead: 'c5 c5 d5 e5  c5 e5 d5 -   c5 c5 d5 e5  c5 -  b4 -  ' +
@@ -49,7 +104,6 @@ const TRACKS = [
     drum: 'x  .  h  .   x  .  h  h  ',
   },
   {
-    /* Stephen Foster, 1850. Also from the cabinet. */
     name: 'Camptown Races',
     bpm: 150,
     lead: 'g5 g5 e5 g5  a5 g5 e5 -   d5 e5 d5 -   -  .  .  .  ' +
@@ -135,6 +189,7 @@ const Music = {
   _beat: 0,
   _nextTime: 0,
   _compiled: null,
+  _audio: null,          /* the <audio> element, for file tracks */
 
   /* --- setup ---------------------------------------------------------- */
 
@@ -175,10 +230,27 @@ const Music = {
 
   start() {
     if (!CONFIG.music || !this.enabled || this.playing || !TRACKS.length) return;
+
+    const t = this.track();
+
+    /* A file track: stream it through an <audio> element. Much simpler than
+       decoding it ourselves, and it starts playing before it has finished
+       downloading. */
+    if (t.file) {
+      const el = this._element();
+      if (!el) return;
+      if (el.src.indexOf(encodeURI(t.file)) === -1) el.src = t.file;
+      el.loop = true;
+      el.volume = t.volume == null ? 0.5 : t.volume;
+      const p = el.play();
+      if (p && p.catch) p.catch(() => { /* blocked until a real gesture */ });
+      this.playing = true;
+      return;
+    }
+
     const ctx = this._prepare();
     if (!ctx) return;
 
-    const t = this.track();
     this._compiled = {
       bpm: t.bpm || 130,
       lead: compilePattern(t.lead),
@@ -193,6 +265,25 @@ const Music = {
 
   stop() {
     this.playing = false;
+    if (this._audio) { this._audio.pause(); }
+  },
+
+  /* The shared <audio> element for file tracks. */
+  _element() {
+    if (!this._audio) {
+      if (typeof document === 'undefined' || !document.createElement) return null;
+      const el = document.createElement('audio');
+      if (!el || !el.play) return null;
+      el.preload = 'none';
+      this._audio = el;
+    }
+    return this._audio;
+  },
+
+  /* Is the current track a file, or notes we generate? */
+  isFileTrack() {
+    const t = this.track();
+    return !!(t && t.file);
   },
 
   /* R: next track. */
@@ -234,7 +325,7 @@ const Music = {
      ------------------------------------------------------------------- */
 
   pump() {
-    if (!this.playing) return;
+    if (!this.playing || this.isFileTrack()) return;
     const ctx = this._ctx;
     if (!ctx) return;
     if (ctx.state === 'suspended') ctx.resume();
@@ -353,4 +444,12 @@ const Music = {
 
    Press R in the game to hear the next track, so you can jump straight to
    the one you are working on.
+
+   ADDING AN MP3 INSTEAD
+
+   Drop the file in music/ and add one line. That is the whole thing:
+
+     { name: 'My Tune', file: 'music/my tune.mp3' },
+
+   Add `volume: 0.3` if it comes out louder than the rest.
    ========================================================================== */

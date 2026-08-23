@@ -16,6 +16,13 @@ const SOUNDS = {
   level:  { wave: 'triangle', steps: [[520,0.09],[660,0.09],[780,0.09],[1040,0.22]], gain: 0.16 },
   life:   { wave: 'square',   steps: [[880, 0.07], [1320, 0.12]],                 gain: 0.13 },
   over:   { wave: 'sawtooth', steps: [[400,0.16],[320,0.16],[240,0.16],[150,0.40]], gain: 0.16 },
+  pickup: { wave: 'triangle', steps: [[780, 0.06], [1040, 0.10]],                  gain: 0.14 },
+
+  /* --- the bonus round --- */
+  smash:    { wave: 'sawtooth', steps: [[190, 0.05], [95, 0.09]],                  gain: 0.20 },
+  bigsmash: { wave: 'square',   steps: [[300,0.04],[170,0.05],[90,0.13]],           gain: 0.24 },
+  bonus:    { wave: 'square',   steps: [[520,0.09],[660,0.09],[880,0.09],[1320,0.26]], gain: 0.18 },
+  fanfare:  { wave: 'triangle', steps: [[660,0.10],[880,0.10],[1100,0.10],[1320,0.10],[1760,0.34]], gain: 0.18 },
 };
 
 const Sound = {

@@ -21,6 +21,17 @@ function resetLanes() {
 }
 function reset() { resetLanes(); api.startGame(); frames(1); }
 
+/* The suite below was written against the arcade rules: all five lilypads to
+   clear a level, and the two harsh deaths switched on. Those are now the
+   EXPERT mode / baysToClear settings rather than the defaults, so pin them
+   here. The new defaults get their own section at the end. */
+const DEFAULT_BAYS_TO_CLEAR = CONFIG.baysToClear;
+const DEFAULT_MODE = game.mode;
+CONFIG.baysToClear = CONFIG.homeCols.length;
+
+function arcadeStrict() { game.mode = "expert"; }
+function relax() { game.mode = DEFAULT_MODE; }
+
 console.log("\n== boot ==");
 frames(1);
 check("starts on title screen", game.state === "title", game.state);
@@ -38,7 +49,8 @@ frames(1);
 check("space starts the game", game.state === "play", game.state);
 check("frog at bottom centre", game.frog.row === 12 && game.frog.x === 6 * GRID,
   `${game.frog.row},${game.frog.x}`);
-check("lives from config", game.lives === CONFIG.lives, game.lives);
+check("lives come from the mode", game.lives === api.setting("lives", CONFIG.lives),
+  `${game.lives} vs ${api.setting("lives", CONFIG.lives)}`);
 check("timer full", Math.abs(game.timeLeft - CONFIG.timeLimit) < 0.1, game.timeLeft);
 
 console.log("\n== hop scoring ==");
@@ -204,7 +216,8 @@ frames(2);
 
 const homeRow = lanes.findIndex(l => l.type === "home");
 
-console.log("\n== the lilypads ==");
+console.log("\n== the lilypads (arcade rules) ==");
+arcadeStrict();
 reset();
 game.frog.row = homeRow;
 game.frog.x = 1 * GRID;                       // col 1 is bank, not a bay
@@ -218,6 +231,8 @@ game.frog.row = homeRow;
 game.frog.x = CONFIG.homeCols[0] * GRID;
 frames(1);
 check("jumping into an occupied lilypad kills you", game.state === "dying", game.state);
+
+relax();
 
 console.log("\n== the time bonus ==");
 reset();
@@ -365,6 +380,7 @@ if (game.lady) {
 }
 
 console.log("\n== extra lives ==");
+relax();
 reset();
 game.lives = 3;
 game.score = 0;
@@ -405,7 +421,19 @@ const { Music, Art, PALETTES } = api;
 check("there are tracks", Music.trackName().length > 0);
 
 let musicProblems = [];
-for (const t of api.TRACKS) {
+const writtenTracks = api.TRACKS.filter(t => !t.file);
+const fileTracks = api.TRACKS.filter(t => t.file);
+
+check("there are music files in the list", fileTracks.length > 0, String(fileTracks.length));
+check("every file track has a name and a path",
+  fileTracks.every(t => t.name && /^music\/.+\.(m4a|mp3|ogg|wav|aac|opus)$/i.test(t.file)),
+  fileTracks.filter(t => !t.name || !/^music\//.test(t.file || "")).map(t => t.file).join(", "));
+check("no file track uses a format Safari cannot play",
+  fileTracks.every(t => !/\.(ogg|opus)$/i.test(t.file)),
+  fileTracks.filter(t => /\.(ogg|opus)$/i.test(t.file)).map(t => t.file).slice(0, 4).join(", "));
+check("there are written-out tunes too", writtenTracks.length > 0);
+
+for (const t of writtenTracks) {
   if (!t.name) musicProblems.push("a track has no name");
   if (!t.bpm || t.bpm < 40 || t.bpm > 300) musicProblems.push(`${t.name}: odd bpm ${t.bpm}`);
   for (const voice of ["lead", "bass", "drum"]) {
@@ -583,6 +611,197 @@ for (let i = 0; i < 20; i++) audio.advanceAudio(0.1);
 check("the new track schedules its own notes",
   audio.scheduled.filter(e => e.kind === "osc").length > 10);
 api.Music.stop();
+
+
+/* ==========================================================================
+   The new defaults: one frog to clear, and the two modes
+   ========================================================================== */
+
+console.log("\n== one frog clears a level ==");
+CONFIG.baysToClear = DEFAULT_BAYS_TO_CLEAR;
+relax();
+check("the default is one lilypad", CONFIG.baysToClear === 1, String(CONFIG.baysToClear));
+
+reset();
+const lvlBefore = game.level;
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[2] * GRID;
+frames(1);
+check("filling one lilypad clears the level", game.state === "levelClear", game.state);
+frames(160);
+check("and the next level starts", game.level === lvlBefore + 1, String(game.level));
+
+console.log("\n== beginner and expert ==");
+const names = Object.keys(api.MODES);
+check("there are at least two modes", names.length >= 2, names.join(", "));
+check("every mode has a label and a blurb",
+  names.every(n => api.MODES[n].label && api.MODES[n].blurb));
+
+check("left and right cycle the mode", (() => {
+  const first = game.mode;
+  api.cycleMode(1);
+  const second = game.mode;
+  api.cycleMode(-1);
+  return first !== second && game.mode === first;
+})());
+
+game.mode = "beginner";
+check("beginner softens the bank rule", api.rule("bankIsDeath") === false);
+check("beginner refills lives each level", api.setting("refillLivesOnLevel", false) === true);
+check("beginner's fly is points only", api.setting("flyGivesLife", false) === false);
+
+game.mode = "expert";
+check("expert keeps the bank rule", api.rule("bankIsDeath") === true);
+check("expert does not refill", api.setting("refillLivesOnLevel", false) === false);
+check("expert's fly is worth a life", api.setting("flyGivesLife", false) === true);
+check("expert gives fewer lives to start",
+  api.MODES.expert.lives < api.MODES.beginner.lives);
+check("expert's flies are rarer",
+  api.MODES.expert.baySpawnGap > api.MODES.beginner.baySpawnGap);
+check("expert ramps up faster", (() => {
+  game.mode = "expert"; game.level = 5;
+  const fast = api.speedMultiplier();
+  game.mode = "beginner";
+  const slow = api.speedMultiplier();
+  game.level = 1;
+  return fast > slow;
+})());
+
+console.log("\n== lives: refill vs earn ==");
+game.mode = "beginner";
+reset();
+game.lives = 1;
+api.advanceLevel();
+check("beginner gets its frogs back on the next level",
+  game.lives === api.MODES.beginner.lives, String(game.lives));
+
+game.mode = "expert";
+reset();
+game.lives = 1;
+api.advanceLevel();
+check("expert does not", game.lives === 1, String(game.lives));
+
+console.log("\n== the fly is worth a life in expert ==");
+game.mode = "expert";
+reset();
+game.lives = 2;
+game.timeLeft = 0.4;
+game.bayHazard = { bay: 1, kind: "fly", bornAt: game.time };
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[1] * GRID;
+frames(1);
+check("catching a fly hands back a frog", game.lives === 3, String(game.lives));
+
+game.mode = "beginner";
+reset();
+game.lives = 2;
+game.timeLeft = 0.4;
+game.bayHazard = { bay: 1, kind: "fly", bornAt: game.time };
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[1] * GRID;
+frames(1);
+check("in beginner it is just points", game.lives === 2, String(game.lives));
+relax();
+
+
+/* ==========================================================================
+   The bonus round
+   ========================================================================== */
+
+console.log("\n== when the bonus round happens ==");
+const B = api.BONUS;
+check("no bonus before the first one", !api.isBonusLevel(B.firstLevel - 1));
+check("a bonus on the first bonus level", api.isBonusLevel(B.firstLevel));
+check("and every few levels after",
+  api.isBonusLevel(B.firstLevel + B.everyLevels) &&
+  api.isBonusLevel(B.firstLevel + B.everyLevels * 2));
+check("not on the levels in between",
+  !api.isBonusLevel(B.firstLevel + 1) && !api.isBonusLevel(B.firstLevel + 2));
+
+console.log("\n== the bonus round runs ==");
+reset();
+game.level = B.firstLevel - 1;
+api.advanceLevel();
+check("clearing into a bonus level starts the intro", game.state === "bonusIntro", game.state);
+check("inBonus() is true during the intro", api.inBonus() === true);
+check("the truck starts on the board",
+  api.bonus.x >= 0 && api.bonus.x <= WIDTH && api.bonus.y > 0);
+check("the clock is full", Math.abs(api.bonus.timeLeft - B.duration) < 0.01);
+
+frames(Math.ceil(B.introTime * 60) + 5);
+check("the intro gives way to the rampage", game.state === "bonus", game.state);
+
+/* Drive into things and check it all adds up. */
+const startScore = game.score;
+api.held.up = true;
+let smashesSeen = 0;
+for (let i = 0; i < 60 * 8; i++) {
+  frames(1);
+  if (api.bonus.smashed > smashesSeen) smashesSeen = api.bonus.smashed;
+  /* Wander so we keep meeting traffic. */
+  if (i % 40 === 0) { api.held.left = !api.held.left; }
+  if (i % 70 === 0) { api.held.up = !api.held.up; api.held.down = !api.held.up; }
+}
+api.held.up = api.held.down = api.held.left = api.held.right = false;
+
+check("driving into things smashes them", smashesSeen > 0, String(smashesSeen));
+check("smashing scores points", api.bonus.points > 0, String(api.bonus.points));
+check("the combo was recorded", api.bonus.bestCombo >= 1, String(api.bonus.bestCombo));
+check("the truck stayed on the board",
+  api.bonus.x >= 0 && api.bonus.x <= WIDTH && api.bonus.y >= GRID &&
+  api.bonus.y <= api.HEIGHT - GRID);
+check("nothing killed the truck", game.state === "bonus" || game.state === "bonusResults",
+  game.state);
+check("debris was thrown", api.bonus.particles.length >= 0);
+
+/* Run the clock out. */
+for (let i = 0; i < 60 * 30 && game.state === "bonus"; i++) frames(1);
+check("the rampage ends when the clock does", game.state === "bonusResults", game.state);
+check("the bonus was added to the score", game.score > startScore,
+  `${startScore} -> ${game.score}`);
+check("the tally remembers the total", game.bonusTotal === api.bonus.points,
+  `${game.bonusTotal} vs ${api.bonus.points}`);
+
+for (let i = 0; i < Math.ceil(B.resultsTime * 60) + 10; i++) frames(1);
+check("play resumes after the tally", game.state === "play", game.state);
+check("everything is back on the board after the rampage",
+  api.smashableLanes().every(l => l.obstacles.every(o => !o.deadUntil || o.deadUntil <= game.time)));
+
+console.log("\n== the bonus round cannot kill you ==");
+reset();
+game.level = B.firstLevel - 1;
+api.advanceLevel();
+frames(Math.ceil(B.introTime * 60) + 5);
+const livesAtStart = game.lives;
+/* Park the truck right on top of the traffic and sit there. */
+api.bonus.y = api.laneY(lanes.findIndex(l => l.type === "road" && l.kind !== "snake"));
+for (let i = 0; i < 240; i++) frames(1);
+check("sitting in traffic in the truck is harmless",
+  game.state === "bonus" && game.lives === livesAtStart,
+  `${game.state} lives ${game.lives}`);
+/* And in the river. */
+api.bonus.y = api.laneY(lanes.findIndex(l => l.type === "river"));
+for (let i = 0; i < 240; i++) frames(1);
+check("so is sitting in the river", game.state === "bonus" && game.lives === livesAtStart,
+  `${game.state} lives ${game.lives}`);
+
+check("the frog does not hop during the bonus round", (() => {
+  const before = { x: api.bonus.x, y: api.bonus.y };
+  api.hop(1, 0);
+  api.hop(0, -1);
+  return api.bonus.x === before.x && api.bonus.y === before.y;
+})());
+
+console.log("\n== the boat and truck art exist ==");
+for (const kind of ["monsterTruck", "boat"]) {
+  for (const themeName of Object.keys(api.THEMES)) {
+    const a = api.THEMES[themeName].art[kind];
+    check(`the ${themeName} theme has ${kind}`, !!a, `missing`);
+    if (a && a.draw === "pixels") {
+      check(`  and its sprite exists`, !!api.SPRITES[a.sprite], a.sprite);
+    }
+  }
+}
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

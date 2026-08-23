@@ -124,6 +124,25 @@ Open **`js/music.js`**. Every tune is written out as text, one note per beat.
 Press **R** in the game to skip to the next track, so you can jump straight to
 the one you are working on. Press **M** to mute.
 
+**Adding audio files instead.** Drop them into `music/` and run:
+
+```bash
+deno task music
+```
+
+That rewrites the list of files at the top of `js/music.js` for you. Do not
+hand-edit between the `MUSIC-FILES` markers, because the next run will
+overwrite it.
+
+Use **.m4a** or **.mp3**. Safari and iOS cannot play `.ogg` at all, so an
+ogg-only track means silence on an iPad. If you have ogg files, convert them:
+
+```bash
+cd music && for f in *.ogg; do ffmpeg -i "$f" -c:a aac -b:a 128k "${f%.ogg}.m4a" && rm "$f"; done
+```
+
+The scanner will warn you if it finds any it is worried about.
+
 **A trick that always works:** pick five notes and only use those. `c d e g a`
 in any order sounds cheerful. `a c d e g` sounds a bit spooky. You genuinely
 cannot play a wrong note.
@@ -156,6 +175,61 @@ backgrounds change. Copy a block, rename it, and it joins the C rotation.
 
 Ideas: a black-and-white one, a single-colour one, your football team's
 colours, one where everything is a shade of purple.
+
+## Level 3d: change the modes
+
+`MODES` in `js/config.js`. Left and right on the title screen pick between
+them, and anything a mode does not mention falls back to the settings above it.
+
+```js
+beginner: {
+  label: 'BEGINNER',
+  blurb: 'lives refill every level',
+  lives: 5,
+  refillLivesOnLevel: true,   // full tank at the start of each level
+  flyGivesLife: false,        // the fly is just points here
+  baySpawnGap: 5,             // so flies turn up often
+  speedStep: 0.08,            // a gentler climb
+  rules: { bankIsDeath: false, occupiedBayIsDeath: false },
+},
+```
+
+**Add a third mode.** Copy a block, give it a name, and it joins the rotation.
+An "impossible" mode is one frog, `speedStep: 0.25`, and every rule on. A "tiny
+kid" mode is 99 lives, `timeLimit: 90` and `speedStep: 0`.
+
+**Make one frog into five.** At the top of the file:
+
+```js
+baysToClear: 1,     // 5 is the arcade rule: fill every lilypad to advance
+```
+
+## Level 3e: change the bonus round
+
+`BONUS` in `js/config.js` is the monster truck rampage.
+
+```js
+firstLevel: 3,      // the first one happens on the way to level 3
+everyLevels: 4,     // and then every 4 levels after that
+duration: 22,       // seconds of rampage
+speed: 250,         // how fast the truck drives, pixels a second
+points: { car: 100, truck: 250, boat: 150 },
+comboWindow: 1.6,   // hit something within this long and the multiplier climbs
+comboMax: 10,
+respawnDelay: 1.4,  // how long a flattened thing stays gone
+```
+
+Things to try:
+
+- **`firstLevel: 1`** so the bonus round is the first thing you see
+- **`everyLevels: 1`** for nothing but bonus rounds, which is very silly
+- **`duration: 60`** and let them get it out of their system
+- **`comboWindow: 3`** makes big multipliers much easier, which is more fun for
+  a younger kid than it is fair
+- **`speed: 500`** is genuinely hard to control and very funny
+
+The truck and the boats are pixel art like everything else, in
+`js/sprites.js` under `monsterTruck` and `boat`. Draw the kids' own truck.
 
 ## Level 4: make it easier, or brutal
 
@@ -301,6 +375,8 @@ first tells you if you broke a rule. The second tells you if you broke the
 | The frog dies instantly | You probably gave the bottom row a `'road'` or `'river'` type. The last row should be `'start'`. |
 | No music | Click or press a key first: browsers will not play sound until you have touched the page. Then check `music: true` in config.js and that M has not muted it. |
 | A tune sounds wrong | A note name it did not understand is silently skipped. Check for typos like `h5` or `c` with no octave number. |
+| A track is silent on an iPad | It is probably a `.ogg`. Convert it to `.m4a`, see Level 3b. |
+| A new music file does not appear | Run `deno task music` to rebuild the list. |
 | The river becomes impossible | Two river rows next to each other flowing the same way. See the note in Level 6. |
 
 Nothing you can type in `config.js` or `sprites.js` can break anything

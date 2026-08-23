@@ -41,6 +41,14 @@ const CONFIG = {
   /* Which columns have a lilypad. Five bays across 13 columns. */
   homeCols: [0, 3, 6, 9, 12],
 
+  /* How many lilypads you have to fill to finish a level. The arcade wanted
+     all five. One keeps things moving, which is a lot more fun when you are
+     playing in short bursts. Set it to homeCols.length for the arcade rule. */
+  baysToClear: 1,
+
+  /* Which mode to start on. See MODES below. */
+  startMode: 'beginner',
+
   /* --- The arcade rules. All true is faithful. Turn them off to be kind. --- */
   rules: {
     bankIsDeath: true,       /* landing on the bank between two lilypads kills */
@@ -82,6 +90,82 @@ const CONFIG = {
        like the arcade. This is how long that grace period lasts. */
     bayCrocSurfacing: 1.0,
   },
+};
+
+
+/* ==========================================================================
+   1b. MODES  ::  beginner and expert
+   --------------------------------------------------------------------------
+   Pick one on the title screen with the LEFT and RIGHT arrows. Anything a
+   mode does not mention falls back to the settings above.
+
+   The interesting difference is how you get lives. Beginner hands them all
+   back every time you finish a level, so a bad patch never ends the run.
+   Expert never does, but the bonus fly is worth a whole life, and it only
+   turns up now and again, so spotting one is a genuine event.
+   ========================================================================== */
+
+const MODES = {
+
+  beginner: {
+    label: 'BEGINNER',
+    blurb: 'lives refill every level',
+    lives: 5,
+    refillLivesOnLevel: true,    /* full tank at the start of each level */
+    flyGivesLife: false,         /* the fly is just points here */
+    baySpawnGap: 5,              /* so flies and lilypad crocs are common */
+    speedStep: 0.08,             /* a gentler climb than the arcade */
+    rules: {
+      /* The two deaths that feel unfair before you know they exist. */
+      bankIsDeath: false,
+      occupiedBayIsDeath: false,
+    },
+  },
+
+  expert: {
+    label: 'EXPERT',
+    blurb: 'no refills, but a fly is worth a life',
+    lives: 3,
+    refillLivesOnLevel: false,
+    flyGivesLife: true,          /* catch one and you get a frog back */
+    baySpawnGap: 17,             /* rare, so it matters when you see one */
+    speedStep: 0.12,
+    rules: {
+      bankIsDeath: true,
+      occupiedBayIsDeath: true,
+    },
+  },
+};
+
+
+/* ==========================================================================
+   1c. BONUS ROUND  ::  monster truck rampage
+   --------------------------------------------------------------------------
+   Every so often, instead of a normal level, the frog gets into a monster
+   truck. No lives, no drowning, no rules: just drive around flattening
+   traffic and ramming boats for as long as the clock lasts.
+   ========================================================================== */
+
+const BONUS = {
+  firstLevel: 3,        /* the first one happens on the way to level 3 */
+  everyLevels: 4,       /* and then every 4 levels after that */
+
+  duration: 22,         /* seconds of rampage */
+  introTime: 3.2,       /* the "BONUS ROUND" screen */
+  resultsTime: 4.0,     /* the tally afterwards */
+
+  speed: 250,           /* how fast the truck drives, pixels a second */
+
+  /* What each thing is worth when you flatten it. */
+  points: { car: 100, truck: 250, boat: 150 },
+
+  /* Smash things within this many seconds of each other and the multiplier
+     climbs. It is the multiplier that makes it exciting. */
+  comboWindow: 1.6,
+  comboMax: 10,
+
+  /* How long a flattened thing stays gone before it comes back for more. */
+  respawnDelay: 1.4,
 };
 
 
@@ -246,6 +330,9 @@ const THEMES = {
       bayCroc: { draw: 'pixels', sprite: 'bayCroc' },
       splat:   { draw: 'pixels', sprite: 'splat' },
 
+      monsterTruck: { draw: 'pixels', sprite: 'monsterTruck' },
+      boat:    { draw: 'pixels', sprite: 'boat', fit: 'repeat' },
+
       log:     { draw: 'pixels', sprite: 'logMid', fit: 'repeat',
                  capLeft: 'logLeft', capRight: 'logRight' },
       gator:   { draw: 'pixels', sprite: 'gatorBody', fit: 'repeat',
@@ -290,6 +377,9 @@ const THEMES = {
       fly:     { draw: 'emoji', glyph: '🪰', scale: 0.7 },
       bayCroc: { draw: 'emoji', glyph: '🐊', scale: 0.8 },
       splat:   { draw: 'emoji', glyph: '💥' },
+
+      monsterTruck: { draw: 'emoji', glyph: '🛻', scale: 0.95 },
+      boat:    { draw: 'emoji', glyph: '⛵', fit: 'repeat' },
 
       log:     { draw: 'emoji', glyph: '🪵', fit: 'repeat' },
       gator:   { draw: 'emoji', glyph: '🐊', fit: 'repeat', faces: 'left' },

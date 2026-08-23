@@ -30,9 +30,12 @@ const repoRoot = new URL("..", import.meta.url).pathname;
 const types = {
   html: "text/html", js: "text/javascript", css: "text/css",
   png: "image/png", md: "text/markdown", json: "application/json",
+  m4a: "audio/mp4", mp3: "audio/mpeg", ogg: "audio/ogg", wav: "audio/wav",
 };
 const server = Deno.serve({ port: PORT, onListen: () => {} }, async (req) => {
-  let path = new URL(req.url).pathname;
+  /* Track filenames have spaces in them, so the path arrives percent-encoded
+     and has to be decoded before it will match anything on disk. */
+  let path = decodeURIComponent(new URL(req.url).pathname);
   if (path === "/") path = "/index.html";
   try {
     const body = await Deno.readFile(repoRoot + path.slice(1));
@@ -272,13 +275,57 @@ try {
   await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 300, y: 400,
     button: "left", clickCount: 1 });
   await frames(10);
-  await evaluate("frogger.Music.enabled = true; CONFIG.music = true; frogger.Music.start()");
+  await evaluate("frogger.Music.enabled = true; CONFIG.music = true;");
+
+  /* The radio holds two kinds of track: files that stream through an <audio>
+     element, and tunes generated from notes. Both need proving. */
+
+  /* --- a file track --- */
+  const fileIdx = await evaluate("frogger.TRACKS.findIndex(t => !!t.file)");
+  check("the radio has file tracks", fileIdx >= 0, String(fileIdx));
+
+  await evaluate(`frogger.Music.stop(); frogger.Music.index = ${fileIdx};
+                  frogger.Music.start()`);
+  await new Promise((r) => setTimeout(r, 1200));
+
+  check("the file track has a source",
+    await evaluate("!!(frogger.Music._audio && frogger.Music._audio.src)"),
+    String(await evaluate("frogger.Music._audio && frogger.Music._audio.src")));
+  check("the browser could decode it (no error)",
+    await evaluate("!(frogger.Music._audio.error)"),
+    String(await evaluate("frogger.Music._audio.error && frogger.Music._audio.error.code")));
+  check("it is not paused", await evaluate("frogger.Music._audio.paused === false"),
+    String(await evaluate("frogger.Music._audio.paused")));
+  check("it loops, so it never falls silent",
+    await evaluate("frogger.Music._audio.loop === true"));
+
+  const at0 = await evaluate("frogger.Music._audio.currentTime");
+  await new Promise((r) => setTimeout(r, 900));
+  const at1 = await evaluate("frogger.Music._audio.currentTime");
+  check("the file is actually playing through", at1 > at0, `${at0} -> ${at1}`);
+
+  /* Every file in the list must really be there and be servable. */
+  const files = await evaluate("frogger.TRACKS.filter(t => t.file).map(t => t.file)");
+  let missing = [];
+  for (const f of files) {
+    const r = await fetch(`http://localhost:${PORT}/` + encodeURI(f));
+    if (!r.ok) missing.push(`${f} (${r.status})`);
+    await r.body?.cancel();
+  }
+  check(`all ${files.length} music files are present`, missing.length === 0,
+    missing.slice(0, 4).join(" | "));
+
+  /* --- a written track --- */
+  const noteIdx = await evaluate("frogger.TRACKS.findIndex(t => !t.file)");
+  await evaluate(`frogger.Music.stop(); frogger.Music.index = ${noteIdx};
+                  frogger.Music.start()`);
   await frames(20);
 
+  check("switching to a written tune pauses the file",
+    await evaluate("frogger.Music._audio.paused === true"));
   check("an AudioContext is running",
     await evaluate("frogger.Music._ctx && frogger.Music._ctx.state === 'running'"),
     await evaluate("String(frogger.Music._ctx && frogger.Music._ctx.state)"));
-  check("the music is playing", await evaluate("frogger.Music.playing === true"));
 
   const beat0 = await evaluate("frogger.Music._beat");
   await new Promise((r) => setTimeout(r, 600));

@@ -190,6 +190,8 @@ const game = {
   paused: false,
   time: 0,
 
+  mode: localStorage.getItem('frogger.mode') || CONFIG.startMode,
+
   score: 0,
   highScore: Number(localStorage.getItem(HIGH_SCORE_KEY) || 0),
   level: 1,
@@ -210,6 +212,7 @@ const game = {
 
   frog: null,
   deathReason: '',
+  bonusTotal: 0,       /* what the last bonus round was worth */
   lastBonus: null,     /* a little "+200" that floats up */
   notice: null,        /* the R / M / C popup: { text, at } */
 };
@@ -233,15 +236,53 @@ function newFrog() {
   };
 }
 
+/* ==========================================================================
+   Modes
+   --------------------------------------------------------------------------
+   Everything a mode does not say falls back to CONFIG, so a mode only has to
+   list what it changes.
+   ========================================================================== */
+
+function mode() {
+  return MODES[game.mode] || MODES[CONFIG.startMode] || Object.values(MODES)[0];
+}
+
+/* A setting, from the mode if it has an opinion, otherwise from CONFIG. */
+function setting(key, fallback) {
+  const m = mode();
+  if (m && m[key] !== undefined) return m[key];
+  if (CONFIG[key] !== undefined) return CONFIG[key];
+  return fallback;
+}
+
+/* One of the arcade rules, which a mode can soften. */
+function rule(name) {
+  const m = mode();
+  if (m && m.rules && m.rules[name] !== undefined) return m.rules[name];
+  return CONFIG.rules[name];
+}
+
+function modeNames() {
+  return Object.keys(MODES);
+}
+
+function cycleMode(step) {
+  const names = modeNames();
+  const i = names.indexOf(game.mode);
+  game.mode = names[((i + step) % names.length + names.length) % names.length];
+  localStorage.setItem('frogger.mode', game.mode);
+}
+
 /* Speed climbs with the level, but eases off every few levels before
    climbing again, which is what the cabinet did. */
 function speedMultiplier() {
   const p = PROGRESSION;
+  const step = setting('speedStep', p.speedStep);
   const n = game.level - 1;
   const cycles = Math.floor(n / p.easeEvery);
   const within = n % p.easeEvery;
-  const retained = cycles * p.easeEvery * p.speedStep * (1 - p.easeAmount);
-  return 1 + retained + within * p.speedStep;
+  const retained = cycles * p.easeEvery * step * (1 - p.easeAmount);
+  return 1 + retained + within * step;
 }
 
 
@@ -252,7 +293,7 @@ function speedMultiplier() {
 function startGame() {
   game.score = 0;
   game.level = 1;
-  game.lives = CONFIG.lives;
+  game.lives = setting('lives', CONFIG.lives);
   game.nextExtraLife = CONFIG.score.extraLifeEvery;
   startLevel();
   setState('play');
@@ -264,7 +305,7 @@ function startLevel() {
   game.lady = null;
   game.carrying = false;
   game.lastBonus = null;
-  game.nextBaySpawn = game.time + CONFIG.timing.baySpawnGap;
+  game.nextBaySpawn = game.time + setting('baySpawnGap', CONFIG.timing.baySpawnGap);
   game.nextLadySpawn = game.time + CONFIG.timing.ladySpawnGap * 0.5;
 
   /* Same seed for the same level, so the bonus pattern is learnable. */
@@ -334,7 +375,7 @@ function die(reason) {
 const TUCK_SINK = 0.28;   /* how far it has settled by the end of the warning */
 
 function diveState(lane, ob) {
-  if (!ob.dives || !CONFIG.rules.divingTurtles) {
+  if (!ob.dives || !rule('divingTurtles')) {
     return { sink: 0, submerged: false };
   }
 
@@ -406,14 +447,55 @@ function update(dt) {
     }
 
     case 'levelClear': {
-      if (game.stateTime > 2.0) {
-        game.level++;
+      if (game.stateTime > 2.0) advanceLevel();
+      break;
+    }
+
+    /* --- the bonus round: a flashy intro, the rampage, then the tally --- */
+    case 'bonusIntro': {
+      if (game.stateTime > BONUS.introTime) setState('bonus');
+      break;
+    }
+
+    case 'bonus': {
+      updateBonus(dt);
+      break;
+    }
+
+    case 'bonusResults': {
+      if (game.stateTime > BONUS.resultsTime) {
         startLevel();
         setState('play');
       }
       break;
     }
   }
+}
+
+function advanceLevel() {
+  game.level++;
+
+  /* Beginner mode hands every frog back, so a rough level never ends the run.
+     Expert mode does not: there the bonus fly is the only way back. */
+  if (setting('refillLivesOnLevel', false)) {
+    game.lives = Math.max(game.lives, setting('lives', CONFIG.lives));
+  }
+
+  if (isBonusLevel(game.level)) {
+    startBonusRound();
+    Sound.play('bonus');
+    setState('bonusIntro');
+    return;
+  }
+
+  startLevel();
+  setState('play');
+}
+
+/* True for the whole bonus sequence, intro and tally included. */
+function inBonus() {
+  return game.state === 'bonusIntro' || game.state === 'bonus' ||
+         game.state === 'bonusResults';
 }
 
 function moveObstacles(dt) {
@@ -473,7 +555,7 @@ function updateBayHazard(dt) {
   if (game.bayHazard) {
     if (game.time - game.bayHazard.bornAt > t.bayHazardLife) {
       game.bayHazard = null;
-      game.nextBaySpawn = game.time + t.baySpawnGap;
+      game.nextBaySpawn = game.time + setting('baySpawnGap', t.baySpawnGap);
     }
     return;
   }
@@ -547,7 +629,6 @@ function ladyX() {
 function checkLane(dt) {
   const frog = game.frog;
   const lane = lanes[frog.row];
-  const rules = CONFIG.rules;
 
   const frogL = frog.x + HIT_INSET;
   const frogR = frog.x + GRID - HIT_INSET;
@@ -586,7 +667,7 @@ function checkLane(dt) {
       }
 
       /* Crocodile jaws. The body is a perfectly good boat. */
-      if (riding.variant === 'gator' && rules.gatorMouthIsDeath &&
+      if (riding.variant === 'gator' && rule('gatorMouthIsDeath') &&
           cellUnder(riding, centre) === gatorHeadCell(riding)) {
         die('Eaten by a crocodile');
         return;
@@ -607,7 +688,7 @@ function checkLane(dt) {
       frog.x += drift;
       frog.hopFromX += drift;
 
-      if (rules.edgeIsDeath) {
+      if (rule('edgeIsDeath')) {
         const c = frog.x + GRID / 2;
         if (c < 0 || c > WIDTH) { die('Washed away'); return; }
       } else {
@@ -624,12 +705,12 @@ function checkLane(dt) {
 
       /* The bank between two bays is solid ground you cannot land on. */
       if (bay === -1) {
-        if (rules.bankIsDeath) die('Hit the bank');
+        if (rule('bankIsDeath')) die('Hit the bank');
         return;
       }
 
       if (game.bays[bay]) {
-        if (rules.occupiedBayIsDeath) die('That lilypad is taken');
+        if (rule('occupiedBayIsDeath')) die('That lilypad is taken');
         return;
       }
 
@@ -653,7 +734,15 @@ function checkLane(dt) {
         points += CONFIG.score.fly;
         label = `FLY +${CONFIG.score.fly}`;
         game.bayHazard = null;
-        game.nextBaySpawn = game.time + CONFIG.timing.baySpawnGap;
+        game.nextBaySpawn = game.time + setting('baySpawnGap', CONFIG.timing.baySpawnGap);
+
+        /* In expert mode a fly is worth a whole frog, which is the only way
+           to get one back. Well worth going out of your way for. */
+        if (setting('flyGivesLife', false)) {
+          game.lives++;
+          label = 'FLY  +1 FROG!';
+          Sound.play('life');
+        }
       }
 
       if (game.carrying) {
@@ -666,8 +755,11 @@ function checkLane(dt) {
       addScore(points, label);
       Sound.play('home');
 
-      if (game.bays.every(Boolean)) {
-        addScore(CONFIG.score.clearLevel, `ALL FIVE +${CONFIG.score.clearLevel}`);
+      const filled = game.bays.filter(Boolean).length;
+      const needed = Math.max(1, Math.min(CONFIG.baysToClear, CONFIG.homeCols.length));
+
+      if (filled >= needed) {
+        addScore(CONFIG.score.clearLevel, `LEVEL CLEAR +${CONFIG.score.clearLevel}`);
         Sound.play('level');
         setState('levelClear');
       } else {
@@ -679,11 +771,213 @@ function checkLane(dt) {
 }
 
 
+
+
+/* ==========================================================================
+   THE BONUS ROUND  ::  monster truck rampage
+   --------------------------------------------------------------------------
+   Every few levels the frog climbs into a monster truck and the rules go out
+   of the window. Nothing can kill you. The traffic and the boats are there to
+   be flattened, the truck drives freely instead of hopping, and a multiplier
+   climbs as long as you keep hitting things.
+
+   The whole point is that it feels like a reward, so it is deliberately loud:
+   the screen shakes, debris flies, the numbers pop, and the multiplier is
+   right in the middle of the screen where you cannot miss it.
+   ========================================================================== */
+
+const TRUCK_SIZE = GRID * 1.4;
+
+const bonus = {
+  x: 0, y: 0,
+  smashed: 0,
+  combo: 0,
+  bestCombo: 0,
+  lastSmash: -99,
+  points: 0,
+  timeLeft: 0,
+  particles: [],
+  floats: [],
+  shake: 0,
+  flash: 0,
+};
+
+/* Does the run into this level get a bonus round first? */
+function isBonusLevel(level) {
+  if (!BONUS || !BONUS.firstLevel) return false;
+  if (level < BONUS.firstLevel) return false;
+  return (level - BONUS.firstLevel) % Math.max(1, BONUS.everyLevels) === 0;
+}
+
+/* Anything in a road or river row is fair game. */
+function smashableLanes() {
+  return lanes.filter((l) => (l.type === 'road' || l.type === 'river') &&
+                             l.obstacles.length);
+}
+
+function startBonusRound() {
+  bonus.x = (WIDTH - TRUCK_SIZE) / 2;
+  bonus.y = laneY(START_ROW) + (GRID - TRUCK_SIZE) / 2;
+  bonus.smashed = 0;
+  bonus.combo = 0;
+  bonus.bestCombo = 0;
+  bonus.lastSmash = -99;
+  bonus.points = 0;
+  bonus.timeLeft = BONUS.duration;
+  bonus.particles.length = 0;
+  bonus.floats.length = 0;
+  bonus.shake = 0;
+  bonus.flash = 0;
+
+  /* Everything is back on the board and un-smashed. */
+  for (const lane of lanes) for (const ob of lane.obstacles) ob.deadUntil = 0;
+}
+
+function endBonusRound() {
+  for (const lane of lanes) for (const ob of lane.obstacles) ob.deadUntil = 0;
+  game.bonusTotal = bonus.points;
+  addScore(bonus.points);
+}
+
+/* What is this thing worth? */
+function smashValue(lane) {
+  if (lane.type === 'river') return BONUS.points.boat;
+  if (lane.cells >= 2) return BONUS.points.truck;
+  return BONUS.points.car;
+}
+
+function updateBonus(dt) {
+  bonus.timeLeft -= dt;
+
+  /* --- drive --- */
+  let dx = 0, dy = 0;
+  if (held.left)  dx -= 1;
+  if (held.right) dx += 1;
+  if (held.up)    dy -= 1;
+  if (held.down)  dy += 1;
+  if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }   /* no free speed diagonally */
+
+  bonus.x += dx * BONUS.speed * dt;
+  bonus.y += dy * BONUS.speed * dt;
+
+  /* Stay on the board, HUD rows included as walls. */
+  bonus.x = Math.max(0, Math.min(WIDTH - TRUCK_SIZE, bonus.x));
+  bonus.y = Math.max(GRID, Math.min(HEIGHT - GRID - TRUCK_SIZE, bonus.y));
+
+  /* --- smash --- */
+  const pad = TRUCK_SIZE * 0.16;
+  const tl = bonus.x + pad, tr = bonus.x + TRUCK_SIZE - pad;
+  const tt = bonus.y + pad, tb = bonus.y + TRUCK_SIZE - pad;
+
+  for (const lane of smashableLanes()) {
+    if (!laneActive(lane)) continue;
+    const ly = laneY(lane.row);
+    if (tb < ly || tt > ly + GRID) continue;         /* wrong row entirely */
+
+    for (const ob of lane.obstacles) {
+      if (ob.deadUntil > game.time) continue;
+      const ol = ob.x, or_ = ob.x + ob.cells * GRID;
+      if (tl < or_ && tr > ol) smash(lane, ob);
+    }
+  }
+
+  /* --- the combo cools off --- */
+  if (bonus.combo && game.time - bonus.lastSmash > BONUS.comboWindow) {
+    bonus.combo = 0;
+  }
+
+  /* --- effects --- */
+  bonus.shake = Math.max(0, bonus.shake - dt * 40);
+  bonus.flash = Math.max(0, bonus.flash - dt * 3.5);
+
+  for (let i = bonus.particles.length - 1; i >= 0; i--) {
+    const p = bonus.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { bonus.particles.splice(i, 1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 420 * dt;                                 /* debris falls */
+  }
+  for (let i = bonus.floats.length - 1; i >= 0; i--) {
+    if (game.time - bonus.floats[i].at > 1.1) bonus.floats.splice(i, 1);
+  }
+
+  if (bonus.timeLeft <= 0) {
+    bonus.timeLeft = 0;
+    endBonusRound();
+    Sound.play('fanfare');
+    setState('bonusResults');
+  }
+}
+
+function smash(lane, ob) {
+  ob.deadUntil = game.time + BONUS.respawnDelay;
+
+  /* Keep the run going and the multiplier climbs. */
+  if (game.time - bonus.lastSmash <= BONUS.comboWindow) {
+    bonus.combo = Math.min(BONUS.comboMax, bonus.combo + 1);
+  } else {
+    bonus.combo = 1;
+  }
+  bonus.lastSmash = game.time;
+  bonus.bestCombo = Math.max(bonus.bestCombo, bonus.combo);
+  bonus.smashed++;
+
+  const gained = smashValue(lane) * bonus.combo;
+  bonus.points += gained;
+
+  const cx = ob.x + ob.cells * GRID / 2;
+  const cy = laneY(lane.row) + GRID / 2;
+
+  bonus.floats.push({
+    text: `+${gained}`, x: Math.max(30, Math.min(WIDTH - 30, cx)), y: cy,
+    at: game.time, big: bonus.combo >= 4,
+  });
+
+  /* Debris, in the colours of the thing that just stopped existing. */
+  const art = Art.of(lane.type === 'river' ? 'boat' : (ob.variant || lane.kind));
+  const tint = (art && art.color) ||
+               (art && art.sprite && Art.pixel(pickLetter(art.sprite))) ||
+               '#ffffff';
+  spawnDebris(cx, cy, tint, 8 + bonus.combo);
+
+  bonus.shake = Math.min(11, 5 + bonus.combo * 0.7);
+  bonus.flash = Math.min(0.55, 0.22 + bonus.combo * 0.04);
+
+  Sound.play(bonus.combo >= 5 ? 'bigsmash' : 'smash');
+}
+
+/* Grab a representative colour out of a sprite, for the debris. */
+function pickLetter(spriteName) {
+  const rows = SPRITES[spriteName];
+  if (!rows) return 'W';
+  const mid = rows[Math.floor(rows.length / 2)] || '';
+  for (const ch of mid) if (ch !== '.' && PALETTE[ch]) return ch;
+  return 'W';
+}
+
+function spawnDebris(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 70 + Math.random() * 220;
+    bonus.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - 90,
+      life: 0.45 + Math.random() * 0.5,
+      size: 2 + Math.random() * 4,
+      color: Math.random() < 0.3 ? '#ffffff' : color,
+    });
+  }
+}
+
+
 /* ==========================================================================
    Input
    ========================================================================== */
 
 function hop(dx, dy) {
+  if (inBonus()) return;                 /* the truck drives, it does not hop */
   if (game.state === 'title' || game.state === 'gameOver') { startGame(); return; }
   if (game.state !== 'play' || game.paused) return;
 
@@ -721,10 +1015,43 @@ const KEYS = {
   ArrowDown: [0, 1],  s: [0, 1],  S: [0, 1],
 };
 
+/* Which directions are being held down. The frog hops one square at a time,
+   but the monster truck drives, so the bonus round needs to know what is
+   still pressed rather than just what was tapped. */
+const held = { left: false, right: false, up: false, down: false };
+
+const HELD_NAME = {
+  ArrowLeft: 'left', a: 'left', A: 'left',
+  ArrowRight: 'right', d: 'right', D: 'right',
+  ArrowUp: 'up', w: 'up', W: 'up',
+  ArrowDown: 'down', s: 'down', S: 'down',
+};
+
+function setHeld(key, down) {
+  const name = HELD_NAME[key];
+  if (name) held[name] = down;
+}
+
+function clearHeld() {
+  held.left = held.right = held.up = held.down = false;
+}
+
+window.addEventListener('keyup', (e) => setHeld(e.key, false));
+window.addEventListener('blur', clearHeld);
+
 window.addEventListener('keydown', (e) => {
   const move = KEYS[e.key];
   if (move) {
     e.preventDefault();
+    setHeld(e.key, true);
+
+    /* On the title screen, left and right choose beginner or expert. */
+    if (game.state === 'title' && move[0] !== 0) {
+      cycleMode(move[0]);
+      Sound.play('hop');
+      return;
+    }
+
     hop(move[0], move[1]);
     return;
   }
@@ -808,12 +1135,33 @@ function touchVisible() {
 const pad = document.getElementById('touchpad');
 if (touchVisible()) {
   pad.hidden = false;
+
+  const dirOf = (btn) => {
+    const dx = Number(btn.dataset.dx), dy = Number(btn.dataset.dy);
+    return dx < 0 ? 'left' : dx > 0 ? 'right' : dy < 0 ? 'up' : 'down';
+  };
+
   pad.addEventListener('pointerdown', (e) => {
     const btn = e.target.closest('button[data-dx]');
     if (!btn) return;
     e.preventDefault();
-    hop(Number(btn.dataset.dx), Number(btn.dataset.dy));
+    const dx = Number(btn.dataset.dx), dy = Number(btn.dataset.dy);
+
+    /* The truck needs the button held, the frog just needs a tap. */
+    if (inBonus()) { held[dirOf(btn)] = true; return; }
+
+    if (game.state === 'title' && dx !== 0) { cycleMode(dx); Sound.play('hop'); return; }
+    hop(dx, dy);
   });
+
+  const release = (e) => {
+    const btn = e.target && e.target.closest && e.target.closest('button[data-dx]');
+    if (btn) held[dirOf(btn)] = false;
+    else clearHeld();
+  };
+  pad.addEventListener('pointerup', release);
+  pad.addEventListener('pointercancel', release);
+  pad.addEventListener('pointerleave', release);
 }
 
 /* --- Radio and colour buttons, mirroring the R, M and C keys ------------- */
@@ -851,14 +1199,46 @@ window.addEventListener('orientationchange', fitToScreen);
 
 function draw() {
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+  /* Everything on the board shakes when the truck hits something. The text
+     on top of it deliberately does not, so it stays readable. */
+  ctx.save();
+  if (bonus.shake > 0.1) {
+    ctx.translate((Math.random() - 0.5) * bonus.shake,
+                  (Math.random() - 0.5) * bonus.shake);
+  }
+
   drawBackground();
   drawObstacles();
-  drawLady();
-  drawBays();
-  if (game.frog) drawFrog();
-  drawHud();
+
+  if (inBonus()) {
+    drawBays();              /* so the bank does not look unfinished */
+    drawTruck();
+    drawParticles();
+  } else {
+    drawLady();
+    drawBays();
+    if (game.frog) drawFrog();
+  }
+
+  ctx.restore();
+
+  if (bonus.flash > 0.01) {
+    ctx.fillStyle = `rgba(255,255,255,${bonus.flash})`;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  }
+
+  if (inBonus()) {
+    drawFloats();
+    drawComboMeter();
+    drawBonusHud();
+  } else {
+    drawHud();
+  }
+
   drawDeathBanner();
   drawOverlay();
+  drawBonusOverlay();
   drawNotice();
 }
 
@@ -896,7 +1276,7 @@ function drawNotice() {
 
 function drawBackground() {
   ctx.fillStyle = Art.color('hudBg');
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  ctx.fillRect(-14, -14, WIDTH + 28, HEIGHT + 28);
 
   for (const lane of lanes) {
     let color;
@@ -921,12 +1301,18 @@ function drawObstacles() {
 
     const y = laneY(lane.row);
 
+    const rampage = inBonus();
+
     for (const ob of lane.obstacles) {
       const w = ob.cells * GRID;
       if (ob.x > WIDTH || ob.x + w < 0) continue;
+      if (ob.deadUntil > game.time) continue;      /* flattened, back shortly */
 
-      const art = Art.of(ob.variant || lane.kind);
-      const dive = diveState(lane, ob);
+      /* During the rampage the river is full of boats to ram, and nothing
+         sinks, because nothing is trying to drown you. */
+      const kind = rampage && lane.type === 'river' ? 'boat' : (ob.variant || lane.kind);
+      const art = Art.of(kind);
+      const dive = rampage ? { sink: 0 } : diveState(lane, ob);
 
       drawArt(ctx, art, ob.x, y, w, GRID, {
         dir: Math.sign(ob.vx),
@@ -1016,6 +1402,247 @@ function drawFrog() {
     time: game.time,
     scale: pop,
   });
+}
+
+
+
+
+/* ==========================================================================
+   Drawing the bonus round
+   ========================================================================== */
+
+function drawTruck() {
+  /* A slight bounce while driving, so it never looks like it is sliding. */
+  const moving = held.left || held.right || held.up || held.down;
+  const bob = moving ? Math.sin(game.time * 26) * GRID * 0.045 : 0;
+  const dir = held.right ? 1 : held.left ? -1 : 0;
+
+  drawArt(ctx, Art.of('monsterTruck'), bonus.x, bonus.y + bob,
+          TRUCK_SIZE, TRUCK_SIZE, { cells: 1, dir, time: game.time });
+}
+
+function drawParticles() {
+  for (const p of bonus.particles) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 2.2));
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFloats() {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const f of bonus.floats) {
+    const age = game.time - f.at;
+    ctx.globalAlpha = Math.max(0, 1 - age / 1.1);
+    ctx.font = `bold ${Math.round(GRID * (f.big ? 0.46 : 0.34))}px "Courier New", monospace`;
+    ctx.fillStyle = f.big ? Art.color('accent') : '#ffffff';
+    ctx.fillText(f.text, f.x, f.y - age * 52);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* The multiplier, right in the middle where you cannot miss it. */
+function drawComboMeter() {
+  if (bonus.combo < 2 || game.state !== 'bonus') return;
+
+  const since = game.time - bonus.lastSmash;
+  const left = Math.max(0, 1 - since / BONUS.comboWindow);
+  const pop = 1 + Math.max(0, 0.5 - since) * 0.7;
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const cx = WIDTH / 2;
+  const cy = HEIGHT * 0.30;
+
+  ctx.globalAlpha = 0.55 + left * 0.45;
+  ctx.font = `bold ${Math.round(GRID * 1.15 * pop)}px "Courier New", monospace`;
+  ctx.fillStyle = bonus.combo >= 6 ? '#ff3860'
+                : bonus.combo >= 4 ? Art.color('accent') : '#ffffff';
+  ctx.fillText(`x${bonus.combo}`, cx, cy);
+
+  ctx.font = `bold ${Math.round(GRID * 0.3)}px "Courier New", monospace`;
+  ctx.fillText('COMBO', cx, cy + GRID * 0.78);
+
+  /* A little bar draining away: keep hitting things and it refills. */
+  const bw = GRID * 3.2, bh = GRID * 0.13;
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.fillRect(cx - bw / 2, cy + GRID * 1.05, bw, bh);
+  ctx.fillStyle = Art.color('accent');
+  ctx.fillRect(cx - bw / 2, cy + GRID * 1.05, bw * left, bh);
+  ctx.restore();
+}
+
+function drawBonusHud() {
+  const font = (px) => `bold ${Math.round(px)}px "Courier New", monospace`;
+
+  /* Top row: score and what the rampage is worth so far. */
+  ctx.fillStyle = Art.color('hudBg');
+  ctx.fillRect(0, 0, WIDTH, GRID);
+  ctx.textBaseline = 'middle';
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.3);
+  ctx.fillText('1-UP', 10, GRID * 0.28);
+  ctx.fillStyle = '#fff';
+  ctx.font = font(GRID * 0.38);
+  ctx.fillText(String(game.score).padStart(5, '0'), 10, GRID * 0.7);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = Art.color('accent');
+  ctx.font = font(GRID * 0.3);
+  ctx.fillText('RAMPAGE', WIDTH / 2, GRID * 0.28);
+  ctx.font = font(GRID * 0.42);
+  ctx.fillText('+' + bonus.points, WIDTH / 2, GRID * 0.72);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.3);
+  ctx.fillText('SMASHED', WIDTH - 10, GRID * 0.28);
+  ctx.fillStyle = '#fff';
+  ctx.font = font(GRID * 0.42);
+  ctx.fillText(String(bonus.smashed), WIDTH - 10, GRID * 0.72);
+
+  /* Bottom row: the clock, and it flashes when it is nearly up. */
+  const y = HEIGHT - GRID;
+  ctx.fillStyle = Art.color('hudBg');
+  ctx.fillRect(0, y, WIDTH, GRID);
+
+  const frac = Math.max(0, bonus.timeLeft / BONUS.duration);
+  const barW = WIDTH - GRID * 2.6;
+  const barH = GRID * 0.34;
+  const barX = GRID * 1.3;
+  const barY = y + (GRID - barH) / 2;
+  const panic = bonus.timeLeft < 5 && Math.floor(game.time * 6) % 2 === 0;
+
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = panic ? '#ffffff'
+                : frac < 0.25 ? Art.color('timeLow') : Art.color('accent');
+  ctx.fillRect(barX, barY, barW * frac, barH);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#000';
+  ctx.font = font(GRID * 0.26);
+  ctx.fillText(Math.ceil(bonus.timeLeft) + 's', WIDTH / 2, barY + barH / 2 + 1);
+}
+
+/* --------------------------------------------------------------------------
+   The two big screens. These are pure showmanship and that is the point: the
+   bonus round should feel like the game stopping to hand you a present.
+   -------------------------------------------------------------------------- */
+function drawBonusOverlay() {
+  if (game.state !== 'bonusIntro' && game.state !== 'bonusResults') return;
+
+  const cx = WIDTH / 2;
+  const cy = HEIGHT / 2;
+  const t = game.stateTime;
+
+  /* Bands of colour sweeping across, which is about as loud as a canvas
+     gets without a shader. */
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = 'rgba(0,0,0,0.82)';
+  ctx.fillRect(0, GRID, WIDTH, HEIGHT - GRID * 2);
+
+  const bands = ['#ff2d6f', '#ffb400', '#2ee6a8', '#4aa8ff'];
+  for (let i = 0; i < 22; i++) {
+    const h = GRID * 0.36;
+    const yy = GRID + ((i * h * 1.8 + t * 150) % (HEIGHT - GRID * 2));
+    ctx.globalAlpha = 0.10;
+    ctx.fillStyle = bands[i % bands.length];
+    ctx.fillRect(0, yy, WIDTH, h);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const font = (px, bold) =>
+    `${bold ? 'bold ' : ''}${Math.round(px)}px "Courier New", monospace`;
+
+  if (game.state === 'bonusIntro') {
+    /* Title thumping in time with itself. */
+    const thump = 1 + Math.abs(Math.sin(t * 6)) * 0.09;
+    ctx.font = font(GRID * 0.86 * thump, true);
+    ctx.fillStyle = Math.floor(t * 8) % 2 ? '#fff' : Art.color('accent');
+    ctx.fillText('BONUS ROUND', cx, cy - GRID * 2.1);
+
+    ctx.font = font(GRID * 0.42, true);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('MONSTER TRUCK RAMPAGE', cx, cy - GRID * 1.2);
+
+    const s2 = GRID * 2.4;
+    const bob = Math.sin(t * 4) * GRID * 0.12;
+    drawArt(ctx, Art.of('monsterTruck'), cx - s2 / 2, cy - GRID * 0.6 + bob,
+            s2, s2, { cells: 1, time: game.time });
+
+    ctx.font = font(GRID * 0.34, true);
+    ctx.fillStyle = Art.color('accent');
+    ctx.fillText('SMASH EVERYTHING', cx, cy + GRID * 1.5);
+    ctx.font = font(GRID * 0.27);
+    ctx.fillStyle = '#dfe3ea';
+    ctx.fillText('drive with the arrows  ::  nothing can hurt you', cx, cy + GRID * 2.0);
+    ctx.fillText('keep hitting things to build the multiplier', cx, cy + GRID * 2.45);
+
+    /* 3, 2, 1... */
+    const left = Math.max(0, BONUS.introTime - t);
+    const count = Math.ceil(left);
+    if (count <= 3 && count >= 1) {
+      const grow = 1 + (1 - (left % 1)) * 0.5;
+      ctx.font = font(GRID * 1.5 * grow, true);
+      ctx.globalAlpha = 0.35 + (left % 1) * 0.5;
+      ctx.fillStyle = '#fff';
+      ctx.fillText(String(count), cx, cy + GRID * 3.3);
+      ctx.globalAlpha = 1;
+    }
+  } else {
+    ctx.font = font(GRID * 0.8, true);
+    ctx.fillStyle = Art.color('accent');
+    ctx.fillText('RAMPAGE OVER', cx, cy - GRID * 2.0);
+
+    /* The numbers count up rather than just appearing. */
+    const reveal = Math.min(1, t / 1.2);
+    const rows = [
+      ['SMASHED',    String(Math.round(bonus.smashed * reveal))],
+      ['BEST COMBO', 'x' + Math.round(bonus.bestCombo * reveal)],
+      ['BONUS',      '+' + Math.round(bonus.points * reveal)],
+    ];
+    rows.forEach(([k, v], i) => {
+      const yy = cy - GRID * 0.9 + i * GRID * 0.85;
+      ctx.font = font(GRID * 0.36, true);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#dfe3ea';
+      ctx.fillText(k, cx - GRID * 3.1, yy);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = i === 2 ? Art.color('accent') : '#fff';
+      ctx.font = font(GRID * (i === 2 ? 0.52 : 0.42), true);
+      ctx.fillText(v, cx + GRID * 3.1, yy);
+    });
+
+    ctx.textAlign = 'center';
+    if (t > 1.4) {
+      const rank = bonus.smashed >= 30 ? 'DEMOLITION EXPERT'
+                 : bonus.smashed >= 20 ? 'MENACE TO TRAFFIC'
+                 : bonus.smashed >= 10 ? 'KEEN DRIVER'
+                 : 'LEARNER PLATES';
+      ctx.font = font(GRID * 0.42, true);
+      ctx.fillStyle = Math.floor(t * 5) % 2 ? '#fff' : Art.color('timeBar');
+      ctx.fillText(rank, cx, cy + GRID * 1.9);
+    }
+
+    if (t > 2.4) {
+      ctx.font = font(GRID * 0.3);
+      ctx.fillStyle = '#dfe3ea';
+      ctx.fillText('back to level ' + game.level + '...', cx, cy + GRID * 2.7);
+    }
+  }
+
+  ctx.restore();
 }
 
 
@@ -1191,7 +1818,7 @@ function drawOverlay() {
   const cx = WIDTH / 2;
   const cy = HEIGHT / 2;
 
-  const panelH = showing === 'title' ? GRID * 8.0
+  const panelH = showing === 'title' ? GRID * 9.4
                : showing === 'gameOver' ? GRID * 6
                : GRID * 3.6;
   const panelW = WIDTH - GRID * 0.6;
@@ -1229,19 +1856,28 @@ function drawOverlay() {
       drawArt(ctx, Art.of('frog'), cx - s / 2, cy - GRID * 1.55 + bob, s, s,
               { cells: 1, time: game.time });
 
+      const need = Math.max(1, Math.min(CONFIG.baysToClear, CONFIG.homeCols.length));
       mid(); ctx.fillStyle = Art.color('text');
-      ctx.fillText(`GET ${CONFIG.homeCols.length} FROGS HOME`, cx, cy + GRID * 0.6);
+      ctx.fillText(need === 1 ? 'GET A FROG HOME'
+                              : `GET ${need} FROGS HOME`, cx, cy + GRID * 0.55);
+
+      /* --- the mode picker --- */
+      const m = mode();
+      mid(); ctx.fillStyle = Art.color('accent');
+      ctx.fillText(`\u25c0   ${m.label}   \u25b6`, cx, cy + GRID * 1.3);
+      small(); ctx.fillStyle = Art.color('textDim');
+      ctx.fillText(m.blurb, cx, cy + GRID * 1.78);
 
       small(); ctx.fillStyle = Art.color('textDim');
-      ctx.fillText('cars squash you  ::  water drowns you', cx, cy + GRID * 1.25);
-      ctx.fillText('ride the logs and the turtles', cx, cy + GRID * 1.7);
-      ctx.fillText('arrows or WASD  ::  P pause  ::  N new game', cx, cy + GRID * 2.15);
+      ctx.fillText('cars squash you  ::  you must RIDE the logs and turtles',
+                   cx, cy + GRID * 2.4);
+      ctx.fillText('arrows or WASD  ::  P pause  ::  N new game', cx, cy + GRID * 2.82);
       ctx.fillStyle = Art.color('accent');
-      ctx.fillText('R music  ::  M mute  ::  C colours', cx, cy + GRID * 2.6);
+      ctx.fillText('R music  ::  M mute  ::  C colours', cx, cy + GRID * 3.24);
 
       if (Math.floor(game.time * 1.6) % 2 === 0) {
         mid(); ctx.fillStyle = '#fff';
-        ctx.fillText('PRESS SPACE TO START', cx, cy + GRID * 3.35);
+        ctx.fillText('PRESS SPACE TO START', cx, cy + GRID * 3.95);
       }
       break;
     }
@@ -1252,7 +1888,9 @@ function drawOverlay() {
       mid(); ctx.fillStyle = Art.color('accent');
       ctx.fillText('CLEARED  +' + CONFIG.score.clearLevel, cx, cy + GRID * 0.15);
       small(); ctx.fillStyle = Art.color('textDim');
-      ctx.fillText(nextLevelWarning(game.level + 1), cx, cy + GRID * 0.85);
+      ctx.fillText(isBonusLevel(game.level + 1)
+        ? 'get ready: MONSTER TRUCK RAMPAGE'
+        : nextLevelWarning(game.level + 1), cx, cy + GRID * 0.85);
       break;
     }
 
@@ -1319,6 +1957,8 @@ requestAnimationFrame(loop);
 window.frogger = {
   game, lanes, CONFIG, PROGRESSION, SPRITES, PALETTE, THEMES, PALETTES,
   Music, Art, notify, TRACKS, DEATH_HINTS, overlayFor, noteFreq,
+  MODES, BONUS, bonus, mode, setting, rule, cycleMode, isBonusLevel,
+  advanceLevel, startBonusRound, inBonus, held, smashableLanes,
   startGame, startLevel, hop, laneY, diveState, speedMultiplier,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };

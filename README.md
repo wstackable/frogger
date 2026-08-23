@@ -32,9 +32,29 @@ the screen is the whole design.
 | Snakes | patrol the median from level 3, so the safe row stops being safe |
 | River crocodiles | replace some logs. The back is a fine boat. The jaws are not |
 
+**One frog clears a level.** The arcade wanted all five, which is a long haul
+when you are playing in short bursts. There are still five lilypads to aim at,
+but the level ends when you land in one. Set `baysToClear` to 5 for the arcade
+rule.
+
+**Two modes**, chosen with left and right on the title screen. The real
+difference is how you get lives back.
+
+| | |
+|---|---|
+| **Beginner** | 5 frogs, and they all come back every time you clear a level, so a rough patch never ends the run. The bank and a taken lilypad are harmless. |
+| **Expert** | 3 frogs and no refills, ever. The only way back is the bonus fly, which is worth a whole frog and only turns up now and again. Full arcade rules. |
+
+**A monster truck bonus round**, on the way into level 3 and every four levels
+after. The frog gets into a monster truck, the rules stop applying, and the
+river fills with boats. Nothing can hurt you: drive around flattening traffic
+and ramming boats against the clock. Keep hitting things and a multiplier
+climbs, the screen shakes harder, and debris goes everywhere. Then a tally, and
+a rank you probably did not earn.
+
 **Arcade scoring.** 10 a hop, 50 a frog home, 10 per remaining half-second,
-200 for a fly, 200 for the lady frog, 1000 for filling all five lilypads, a
-free frog every 20,000.
+200 for a fly, 200 for the lady frog, 1000 for clearing a level, a free frog
+every 20,000.
 
 **Difficulty that scales the way the original did.** Everything speeds up per
 level, new kinds of hazard arrive, and every fifth level eases off slightly
@@ -52,10 +72,10 @@ the splat is enough to teach the rule that catches everybody: on the river you
 have to be standing on something.
 
 **A radio and a colour switcher**, same controls as Phoenix 89. **R** changes
-track, **M** mutes, **C** cycles the colour palette. The music is chiptune
-generated live in the browser, so there is nothing to download, and the tunes
-are written out as text you can edit. Two of them, *Yankee Doodle* and
-*Camptown Races*, are tunes the actual cabinet played.
+track, **M** mutes, **C** cycles the colour palette. Twenty-seven tracks: the
+*Three Red Hearts* chiptune loops, one from Phoenix 89, and five tunes written
+out as notes in the source and generated in the browser. Two of those,
+*Yankee Doodle* and *Camptown Races*, are tunes the actual cabinet played.
 
 Plus lives, a 30 second timer, a high score that sticks, pause, keyboard,
 swipe, on-screen buttons on phones, and sound effects with no audio files.
@@ -64,7 +84,8 @@ swipe, on-screen buttons on phones, and sound effects with no audio files.
 
 | | |
 |---|---|
-| Move | Arrow keys, WASD, or swipe |
+| Move | Arrow keys, WASD, or swipe. In the bonus round, **hold** them to drive |
+| Pick a mode | Left and right on the title screen |
 | Start / pause | Space, Enter, or tap. **P** also pauses |
 | New game | **N** |
 | Change music | **R**, or the ♪ button |
@@ -83,12 +104,14 @@ index.html          the page. loads the six scripts in order.
 css/style.css       the page around the game (the game itself is a canvas)
 js/config.js    ←   START HERE. rules, board, difficulty, themes, palettes.
 js/sprites.js   ←   THE PIXEL ART. every picture, drawn as letters.
-js/music.js     ←   THE TUNES. written out as notes you can edit.
+js/music.js     ←   THE TUNES. the track list, and notes you can edit.
+music/              the audio files themselves
 js/render.js        turns art settings into pixels
 js/audio.js         the beeps, generated in code
 js/game.js          the engine: rules, collisions, scoring, the game loop
 assets/             put your own drawings here
 tests/              three suites. worth running. see below.
+tools/              scan-music.js, which rebuilds the track list
 ```
 
 Everything you would want to change is in **`js/config.js`**,
@@ -127,7 +150,13 @@ Night, Ice World and Candy ship with it; a new one is a block of hex codes.
   pixels: { G: '#9bbc0f', R: '#8bac0f', B: '#306230' } },
 ```
 
-**Or write your own music.** One note per beat, `-` holds, `.` rests.
+**Or add music.** Drop files into `music/` and run `deno task music`. That
+rewrites the track list for you, so you never hand-edit it. Use `.m4a` or
+`.mp3`: Safari and iOS will not play `.ogg`, and the scanner warns you if it
+finds any.
+
+**Or write your own tune from scratch.** One note per beat, `-` holds, `.`
+rests.
 
 ```js
 { name: 'Hop To It', bpm: 132,
@@ -187,8 +216,10 @@ things. They need [Deno](https://deno.com); nothing else in the project does.
 ```bash
 deno task test          # the rules: what kills you, what scores, what unlocks when
 deno task test:play     # a bot plays the game and reports how far it got
-deno task test:browser  # real Chrome, real key presses, real rendering
+deno task test:browser  # real Chrome, real key presses, real audio, real rendering
 deno task test:all
+
+deno task music         # rebuild the track list from the music/ folder
 ```
 
 The middle one is the interesting one. **"Is this game fair?" is not a question
@@ -220,4 +251,11 @@ Frogger is a trademark of Konami. This is a hobby reimplementation for
 learning, not affiliated with or endorsed by them, and none of the artwork is
 theirs.
 
-Licensed under [CC0 1.0](LICENSE). Do whatever you like with it.
+**Music.** The chiptune loops are *Three Red Hearts* by
+[Abstraction](https://abstractionmusic.com), released CC-0 through
+[Tallbeard Studios](https://tallbeard.itch.io/three-red-hearts-prepare-to-dev).
+No attribution is required, but it is a lovely pack and deserves the credit.
+One track carries over from Phoenix 89. The written-out tunes are in
+`js/music.js`.
+
+The code is licensed under [CC0 1.0](LICENSE). Do whatever you like with it.

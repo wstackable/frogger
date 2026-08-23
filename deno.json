@@ -4,6 +4,7 @@
     "test:play": "deno run --allow-read tests/playability.test.js",
     "test:browser": "deno run --allow-read --allow-net --allow-run --allow-write --allow-env tests/browser.test.js",
     "test:all": "deno task test && deno task test:play && deno task test:browser",
-    "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server --port 8000"
+    "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server --port 8000",
+    "music": "deno run --allow-read --allow-write tools/scan-music.js"
   }
 }

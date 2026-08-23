@@ -510,6 +510,49 @@ const SPRITES = {
     '................',
     '................',
   ],
+
+  /* ------------------------------------------------- the monster truck
+     For the bonus round. Seen from above, with the frog at the wheel. Grey
+     tyres rather than black ones, because the road it drives on is black. */
+  monsterTruck: [
+    '................',
+    '.ssss......ssss.',
+    '.sKKs......sKKs.',
+    '.ssss......ssss.',
+    '..RRRRRRRRRRRR..',
+    '.RRRRRRRRRRRRRR.',
+    '.RRGGGGGGGGGGRR.',
+    '.RRGWWGGGGWWGRR.',
+    '.RRGWKGGGGKWGRR.',
+    '.RRGGGGGGGGGGRR.',
+    '.RRRRRRRRRRRRRR.',
+    '..RRRRRRRRRRRR..',
+    '.ssss......ssss.',
+    '.sKKs......sKKs.',
+    '.ssss......ssss.',
+    '................',
+  ],
+
+  /* A little boat. The river fills up with these during the bonus round,
+     because ramming boats is more fun than ramming logs. */
+  boat: [
+    '................',
+    '.......W........',
+    '.......WW.......',
+    '......WWWW......',
+    '.....WWWWWW.....',
+    '....WWWWWWWW....',
+    '.......WW.......',
+    '.......WW.......',
+    '..nnnnnnnnnnnn..',
+    '.BBBBBBBBBBBBBB.',
+    '.BBBBBBBBBBBBBB.',
+    '..BBBBBBBBBBBB..',
+    '...bbbbbbbbbb...',
+    '................',
+    '................',
+    '................',
+  ],
 };
 
 
