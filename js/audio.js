@@ -24,6 +24,9 @@ const SOUNDS = {
   tuck:   { wave: 'sine',     steps: [[300, 0.05], [240, 0.07]],                 gain: 0.06 },
   sink:   { wave: 'sine',     steps: [[240, 0.06], [150, 0.09], [90, 0.12]],     gain: 0.09, crunch: 0.10 },
 
+  /* --- a lungful of air on the airless levels --- */
+  breath: { wave: 'sine',     steps: [[520, 0.06], [780, 0.07], [1040, 0.12]],   gain: 0.13 },
+
   /* --- crocodile jaws. creak is the warning, chomp is them shutting again. --- */
   creak:  { wave: 'triangle', steps: [[160, 0.07], [205, 0.08], [250, 0.09]],    gain: 0.07 },
   chomp:  { wave: 'square',   steps: [[190, 0.04], [95, 0.07]],                  gain: 0.10, crunch: 0.16 },

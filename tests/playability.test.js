@@ -216,6 +216,26 @@ function decideOnIce() {
   return [0, 0];
 }
 
+/* On an airless level the tank is the real clock, and a pocket drifting past
+   is worth a detour once it is getting low. Without this the bot plays the
+   level as if the mechanic were not there, which makes it useless for judging
+   whether the drain rate is fair. */
+function airPull(mv) {
+  if (!api.airless() || !game.air.length) return 0;
+
+  const urgency = 1 - game.timeLeft / api.timeCapacity();
+  if (urgency < 0.4) return 0;               /* plenty in the tank, press on */
+
+  let pull = 0;
+  for (const a of game.air) {
+    if (a.row !== mv.row) continue;
+    const gap = Math.abs((a.x + GRID / 2) - (mv.x + GRID / 2));
+    if (gap > GRID * 4) continue;
+    pull = Math.max(pull, (GRID * 4 - gap) * urgency * 1.6);
+  }
+  return pull;
+}
+
 function decide() {
   const frog = game.frog;
   const row = frog.row;
@@ -281,6 +301,8 @@ function decide() {
       score -= Math.abs(tx + lead - mv.x) * 0.5;
     }
 
+    score += airPull(mv);
+
     if (!best || score > best.score) best = { ...mv, score };
   }
 
@@ -301,8 +323,15 @@ const KEY_FOR = {
 };
 
 /* Play for a while and report what happened. */
+/* Air pressure, reported for the airless levels so the tank size can be judged
+   against a player rather than guessed at. */
+const REPORT = { lowTank: Infinity, grabbed: 0 };
+
 function play(maxFrames) {
   const stats = { homes: 0, deaths: 0, levels: 0, byReason: {}, byRow: {} };
+  REPORT.lowTank = Infinity;
+  REPORT.grabbed = 0;
+  let airWas = game.air.length;
 
   let prevHomes = game.bays.filter(Boolean).length;
   let prevLevel = game.level;
@@ -316,6 +345,12 @@ function play(maxFrames) {
       prevHomes = 0;
       continue;
     }
+
+    if (api.airless() && game.state === "play") {
+      REPORT.lowTank = Math.min(REPORT.lowTank, game.timeLeft);
+      if (game.air.length < airWas) REPORT.grabbed++;
+    }
+    airWas = game.air.length;
 
     /* Sit out anything that is not a crossing. */
     if (SPECIAL_STATES.includes(game.state)) {
@@ -460,6 +495,9 @@ for (const level of CROSS_LEVELS) {
   /* Only the rules that are switched ON. A level can turn one off, and
      printing that as if it were active reads as the opposite of the truth. */
   const rules = api.LEVELS[level - 1].rules || {};
+  if (rules.airless) {
+    console.log(`      air: lowest tank ${REPORT.lowTank.toFixed(1)}s of ${api.AIR.tank}, pockets taken ${REPORT.grabbed}`);
+  }
   const twists = Object.keys(rules).filter((k) => rules[k]).join("+") || "-";
   console.log(`     ${String(level).padStart(2)} ${api.levelName(level).padEnd(17)}` +
               `[${twists.padEnd(5)}] homes=${r.homes} deaths=${r.deaths}`);

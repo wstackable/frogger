@@ -352,6 +352,26 @@ const SPRITES = {
     'jjjjjjj.........',
   ],
 
+  /* A pocket of breathable air, for the levels that have none. */
+  airPocket: [
+    '................',
+    '.....CCCCCC.....',
+    '...CCCCCCCCCC...',
+    '..CCWWCCCCCCCC..',
+    '.CCWWWCCCCCCCCC.',
+    '.CCWWCCCCCCCCCC.',
+    'CCCWCCCCCCCCCCCC',
+    'CCCCCCCCCCCCCCCC',
+    'CCCCCCCCCCCCCCCC',
+    'CCCCCCCCCCCCCCCC',
+    '.CCCCCCCCCCCCCC.',
+    '.CCCCCCCCCCCCCC.',
+    '..CCCCCCCCCCCC..',
+    '...CCCCCCCCCC...',
+    '.....CCCCCC.....',
+    '................',
+  ],
+
   /* -------------------------------------------------------------- the snakes
      They patrol the median from level 3, which takes the safety away from
      the one row that used to have it. */

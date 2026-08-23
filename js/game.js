@@ -236,6 +236,8 @@ const game = {
   lastBonus: null,     /* a little "+200" that floats up */
   fx: [],              /* short-lived puffs and rings on the crossing levels */
   riding: null,        /* the log or turtle group under the frog right now */
+  air: [],             /* drifting pockets of air, on the airless levels */
+  nextAir: 0,
   notice: null,        /* the R / M / C popup: { text, at } */
 };
 
@@ -432,6 +434,10 @@ function startLevel() {
   game.lady = null;
   game.carrying = false;
   game.lastBonus = null;
+  game.air.length = 0;
+  /* A pocket almost straight away, so an airless level shows you what it wants
+     from you before it has had a chance to punish you for not knowing. */
+  game.nextAir = game.time + 0.6;
   game.nextBaySpawn = game.time + setting('baySpawnGap', CONFIG.timing.baySpawnGap);
   game.nextLadySpawn = game.time + CONFIG.timing.ladySpawnGap * 0.5;
   game.ghostTime = 0;
@@ -445,7 +451,7 @@ function startLevel() {
 
 function respawn() {
   game.frog = newFrog();
-  game.timeLeft = CONFIG.timeLimit;
+  game.timeLeft = timeCapacity();
   game.carrying = false;
 }
 
@@ -788,9 +794,10 @@ function update(dt) {
       game.timeLeft -= dt;
       if (game.timeLeft <= 0) {
         game.timeLeft = 0;
-        die('Out of time');
+        die(airless() ? 'Out of air' : 'Out of time');
         break;
       }
+      updateAir(dt);
       updateBayHazard(dt);
       updateDives();
       updateGators();
@@ -960,6 +967,102 @@ function moveObstacles(dt) {
     else wrapLane(lane);
   }
 }
+
+/* ==========================================================================
+   Air
+   --------------------------------------------------------------------------
+   On an airless level the clock is a tank. It empties much faster than the
+   normal thirty seconds, and pockets of air drift across the board to top it
+   back up.
+
+   The point is a second question on every hop. A plain crossing only ever
+   asks "is that square safe". This one also asks "can I afford to go and get
+   that", which is a different and better kind of decision, and it is the one
+   the level's own blurb was promising all along.
+   ========================================================================== */
+
+function airless() {
+  return twist('airless');
+}
+
+/* A full tank. On an airless level that is deliberately less than the usual
+   thirty seconds, which is what makes the pockets part of the route. */
+function timeCapacity() {
+  return airless() ? AIR.tank : CONFIG.timeLimit;
+}
+
+/* The rows a pocket can appear on: the ones you actually stand in. Putting one
+   on the lilypad row would be a pocket you can never take, because landing
+   there ends the crossing. */
+function airRows() {
+  return lanes
+    .filter((l) => l.type === 'road' || l.type === 'river' || l.type === 'safe')
+    .map((l) => l.row);
+}
+
+function spawnAirPocket() {
+  const rows = airRows();
+  if (!rows.length) return;
+
+  const row = rows[Math.floor(rng() * rows.length)];
+  const fromLeft = rng() < 0.5;
+
+  game.air.push({
+    row,
+    x: fromLeft ? -GRID : WIDTH,
+    vx: (fromLeft ? 1 : -1) * AIR.pocketSpeed,
+    bob: rng() * Math.PI * 2,
+  });
+}
+
+function updateAir(dt) {
+  if (!airless()) {
+    if (game.air.length) game.air.length = 0;
+    return;
+  }
+
+  if (game.time >= game.nextAir && game.air.length < AIR.pocketMax) {
+    spawnAirPocket();
+    game.nextAir = game.time + AIR.pocketEvery;
+  }
+
+  const frog = game.frog;
+
+  for (let i = game.air.length - 1; i >= 0; i--) {
+    const a = game.air[i];
+    a.x += a.vx * dt;
+
+    if (a.x < -GRID * 2 || a.x > WIDTH + GRID * 2) { game.air.splice(i, 1); continue; }
+    if (!frog || game.state !== 'play') continue;
+
+    /* Reaching one is generous on purpose. The cost of a pocket is the detour
+       you took to get near it, not a pixel-perfect landing. */
+    const near = Math.abs((a.x + GRID / 2) - (frog.x + GRID / 2)) < GRID * 0.8 &&
+                 a.row === frog.row;
+    if (!near) continue;
+
+    game.air.splice(i, 1);
+    game.timeLeft = Math.min(timeCapacity(), game.timeLeft + AIR.pocketGives);
+    addScore(AIR.points, '+' + AIR.points);
+    Sound.play('breath');
+    spawnRing(frog.x + GRID / 2, laneY(frog.row) + GRID / 2, AIRCOL, { to: GRID });
+    spawnPuff(frog.x + GRID / 2, laneY(frog.row) + GRID / 2, AIRCOL, 6, { rise: 40 });
+  }
+}
+
+function drawAir() {
+  if (!game.air.length) return;
+  const art = Art.of('air');
+  for (const a of game.air) {
+    const bob = Math.sin(game.time * 2.6 + a.bob) * GRID * 0.12;
+    drawArt(ctx, art, a.x, laneY(a.row) + bob, GRID, GRID,
+            { cells: 1, time: game.time });
+  }
+}
+
+/* The colour of air, for the puff when you take a breath. */
+const AIRCOL = '#8fe8ff';
+
 
 /* ==========================================================================
    Snakes
@@ -2543,6 +2646,7 @@ function draw() {
     drawRocket();
     drawParticles();
   } else {
+    drawAir();
     drawFx();
     drawGhosts();
     drawLady();
@@ -3476,7 +3580,7 @@ function drawHud() {
   const barH = GRID * 0.3;
   const barX = WIDTH - barW - 8;
   const barY = y + (GRID - barH) / 2;
-  const frac = Math.max(0, game.timeLeft / CONFIG.timeLimit);
+  const frac = Math.max(0, game.timeLeft / timeCapacity());
 
   ctx.fillStyle = 'rgba(255,255,255,0.15)';
   ctx.fillRect(barX, barY, barW, barH);
@@ -3486,7 +3590,7 @@ function drawHud() {
   ctx.textAlign = 'right';
   ctx.fillStyle = dim;
   ctx.font = font(GRID * 0.26, true);
-  ctx.fillText('TIME', barX - 6, y + GRID * 0.5);
+  ctx.fillText(airless() ? 'AIR' : 'TIME', barX - 6, y + GRID * 0.5);
 }
 
 
@@ -3522,6 +3626,7 @@ const DEATH_HINTS = {
   'A crocodile was waiting': 'not every lilypad is what it looks like',
   'Eaten by a crocodile':    'ride the back, never the jaws',
   'Bitten by a snake':       'the median stops being safe at level 3',
+  'Out of air':              'the pockets drifting past are worth the detour',
   'Out of time':             'keep an eye on the TIME bar',
 };
 
@@ -3855,6 +3960,7 @@ window.frogger = {
   startGame, startLevel, hop, laneY, diveState, divePhaseName, speedMultiplier,
   updateDives, spawnPuff, spawnRing, updateFx,
   updateSnakes, SNAKE, snakeLane, levelRule,
+  updateAir, airless, timeCapacity, AIR, spawnAirPocket, airRows,
   updateGators, gatorPhase, gatorBites, GATOR, gatorHeadCell, cellUnder,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };

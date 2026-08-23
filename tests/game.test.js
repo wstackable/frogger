@@ -1768,5 +1768,110 @@ check("an explicit false in a level's rules is not read as unset", (() => {
 })());
 
 
+console.log("\n== no air up there ==");
+
+const AIR_LEVEL = (() => {
+  const i = api.LEVELS.findIndex((l) => l.rules && l.rules.airless);
+  return i === -1 ? -1 : i + 1;
+})();
+
+check("a level says it is airless", AIR_LEVEL !== -1);
+
+if (AIR_LEVEL !== -1) {
+  check("an airless level starts on a small tank, not the full clock", (() => {
+    api.startGame(AIR_LEVEL);
+    frames(1);
+    return api.airless() && api.timeCapacity() === api.AIR.tank &&
+           api.AIR.tank < CONFIG.timeLimit && game.timeLeft <= api.AIR.tank;
+  })(), `capacity ${api.timeCapacity()} left ${game.timeLeft}`);
+
+  check("a normal level still gets the full clock", (() => {
+    api.startGame(1);
+    frames(1);
+    return !api.airless() && api.timeCapacity() === CONFIG.timeLimit;
+  })());
+
+  check("pockets turn up on their own", (() => {
+    api.startGame(AIR_LEVEL);
+    for (let i = 0; i < 60 * 4; i++) {
+      frames(1);
+      if (game.air.length) return true;
+    }
+    return false;
+  })());
+
+  check("never more than the cap on the board", (() => {
+    api.startGame(AIR_LEVEL);
+    let worst = 0;
+    for (let i = 0; i < 60 * 30; i++) { frames(1); worst = Math.max(worst, game.air.length); }
+    return worst > 0 && worst <= api.AIR.pocketMax;
+  })(), `saw ${game.air.length}`);
+
+  check("a pocket never lands on the lilypad row", (() => {
+    const rows = api.airRows();
+    const homeLane = lanes.find((l) => l.type === "home");
+    const startLane = lanes.find((l) => l.type === "start");
+    return rows.length > 0 &&
+           (!homeLane || !rows.includes(homeLane.row)) &&
+           (!startLane || !rows.includes(startLane.row));
+  })());
+
+  check("taking one refills the tank and scores", (() => {
+    api.startGame(AIR_LEVEL);
+    frames(1);
+    for (let i = 0; i < 60 * 5 && !game.air.length; i++) frames(1);
+    const pocket = game.air[0];
+    if (!pocket) return false;
+    game.timeLeft = 2;
+    const score = game.score;
+    game.frog.row = pocket.row;
+    game.frog.x = pocket.x;
+    frames(1);
+    return game.timeLeft > 2 && game.score > score;
+  })(), `left ${game.timeLeft}`);
+
+  check("a refill never overfills the tank", (() => {
+    api.startGame(AIR_LEVEL);
+    frames(1);
+    for (let i = 0; i < 60 * 5 && !game.air.length; i++) frames(1);
+    const pocket = game.air[0];
+    if (!pocket) return false;
+    game.timeLeft = api.AIR.tank;
+    game.frog.row = pocket.row;
+    game.frog.x = pocket.x;
+    frames(1);
+    return game.timeLeft <= api.AIR.tank + 0.001;
+  })(), `left ${game.timeLeft}`);
+
+  check("running the tank dry says you ran out of air", (() => {
+    api.startGame(AIR_LEVEL);
+    frames(1);
+    game.timeLeft = 0.01;
+    frames(3);
+    return game.deathReason === "Out of air";
+  })(), game.deathReason);
+
+  check("and a normal level still says out of time", (() => {
+    api.startGame(1);
+    frames(1);
+    game.timeLeft = 0.01;
+    frames(3);
+    return game.deathReason === "Out of time";
+  })(), game.deathReason);
+
+  check("there is a hint for running out of air",
+    !!api.DEATH_HINTS["Out of air"]);
+
+  check("pockets are cleared between levels", (() => {
+    api.startGame(AIR_LEVEL);
+    for (let i = 0; i < 60 * 4 && !game.air.length; i++) frames(1);
+    const had = game.air.length;
+    api.startGame(1);
+    frames(2);
+    return had > 0 && game.air.length === 0;
+  })());
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

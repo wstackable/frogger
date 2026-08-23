@@ -268,9 +268,10 @@ const LEVELS = [
     rules: { ice: true, snakesHunt: false } },
 
   { name: 'Orbital Traffic',
-    blurb: 'no air, no mercy. the tightest river yet.',  kind: 'cross',  env: 'space',
+    blurb: 'no air. grab the pockets or you do not make it across.',  kind: 'cross',  env: 'space',
     speed: 1.34, roadLanes: 5, river: 'tight',
-    hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'] },
+    hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'],
+    rules: { airless: true } },
 
   { name: 'Blackout',
     blurb: 'dark, and everything is fast. good luck.',         kind: 'cross',  env: 'boneyard',
@@ -354,6 +355,33 @@ const HELI = {
   enemyShotSpeed: 210,
   heliLives: 3,         /* hits you can take before the mission ends */
 };
+
+/* --------------------------------------------------------------------------
+   AIR  ::  for the levels that do not have any
+
+   Orbital Traffic said "no air, no mercy" and then played exactly like every
+   other crossing, only faster. Turn `airless: true` on in a level's rules and
+   the clock stops being a clock and becomes a tank: it drains much faster, and
+   pockets of air drift across the board that top it back up.
+
+   That gives the level a second question to answer on every hop. Not just
+   "is that square safe", but "can I afford the detour", which is a decision
+   the plain crossings never ask.
+   -------------------------------------------------------------------------- */
+
+const AIR = {
+  /* The whole mechanic in one number. You start each frog with this much air
+     instead of the usual thirty seconds, which is not quite enough to get
+     across, so at least one pocket is part of the route rather than a bonus. */
+  tank: 11,
+
+  pocketEvery: 2.4,  /* seconds between one drifting on and the next */
+  pocketMax: 3,      /* how many can be on the board at once */
+  pocketGives: 6,    /* seconds of air each one is worth */
+  pocketSpeed: 58,   /* pixels a second, sideways */
+  points: 50,        /* and a few points, so grabbing one is never a waste */
+};
+
 
 /* --------------------------------------------------------------------------
    CROCODILES  ::  the jaws open and shut
@@ -772,6 +800,7 @@ const THEMES = {
       gatorOpen: { draw: 'pixels', sprite: 'gatorBody', fit: 'repeat',
                  capLeft: 'gatorTail', capRight: 'gatorJaws', faces: 'right' },
       turtle:  { draw: 'pixels', sprite: 'turtle', fit: 'repeat', faces: 'left' },
+      air:     { draw: 'pixels', sprite: 'airPocket' },
       snake:   { draw: 'pixels', sprite: 'snakeBody', fit: 'repeat',
                  capLeft: 'snakeHead', capRight: 'snakeTail', faces: 'left' },
 
@@ -826,6 +855,7 @@ const THEMES = {
       log:     { draw: 'emoji', glyph: '🪵', fit: 'repeat' },
       gator:   { draw: 'emoji', glyph: '🐊', fit: 'repeat', faces: 'left' },
       gatorOpen: { draw: 'emoji', glyph: '🐊', fit: 'repeat', faces: 'left' },
+      air:     { draw: 'emoji', glyph: '🫧' },
       turtle:  { draw: 'emoji', glyph: '🐢', fit: 'repeat', faces: 'left' },
       snake:   { draw: 'emoji', glyph: '🐍', fit: 'repeat', faces: 'left' },
 
