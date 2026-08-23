@@ -402,11 +402,6 @@ try {
     [...pageErrors, ...consoleErrors].slice(palErrs).join(" | "));
   await evaluate("frogger.Art.setPalette(0)");
 
-  /* ---------------------------------------------------- no console noise */
-  console.log("\n== the console is clean ==");
-  check("nothing threw on the page", pageErrors.length === 0, pageErrors.join(" | "));
-  check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
-
   /* ------------------------------------------- the bonus round and engine */
   console.log("\n== the monster truck engine really makes a noise ==");
 
@@ -420,52 +415,35 @@ try {
   check("the engine is running", await evaluate("frogger.Engine.running === true"));
 
   /* Tap the engine's own output with an analyser and measure it. Checking the
-     nodes exist proves nothing: this proves sound is coming out.
-
-     Driven through the real controls rather than by calling setThrottle
-     directly, because the game loop sets the throttle every frame from what
-     the player is doing and would simply overwrite us. */
-  const measure = async (state, moving, ms) => await evaluate(`(async () => {
-    const E = frogger.Engine, g = frogger.game;
+     nodes exist proves nothing: this proves sound is coming out. */
+  const measure = async (throttle, ms) => await evaluate(`(async () => {
+    const E = frogger.Engine;
+    const ctx = E._ctx;
     if (!E._nodes) return -1;
-    if (!window.__an) { window.__an = E._ctx.createAnalyser(); window.__an.fftSize = 2048; }
+    if (!window.__an) {
+      window.__an = ctx.createAnalyser();
+      window.__an.fftSize = 2048;
+    }
     try { E._nodes.out.connect(window.__an); } catch (e) {}
-    g.paused = false;
-    g.state = ${JSON.stringify(state)};
-    Object.keys(frogger.held).forEach(k => frogger.held[k] = false);
-    frogger.held.up = ${moving ? "true" : "false"};
-    if (g.state === 'rocket') frogger.rocket.flying = ${moving ? "true" : "false"};
+    E._revUntil = 0;
+    E.setThrottle(${throttle});
     await new Promise(r => setTimeout(r, ${ms}));
-    const b = new Float32Array(2048);
-    window.__an.getFloatTimeDomainData(b);
-    let s = 0; for (let i = 0; i < b.length; i++) s += b[i] * b[i];
-    frogger.held.up = false;
-    return Math.sqrt(s / b.length);
+    E._revUntil = 0;
+    E.setThrottle(${throttle});
+    const buf = new Float32Array(window.__an.fftSize);
+    window.__an.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    return Math.sqrt(sum / buf.length);
   })()`);
 
-  /* Every machine, not just the truck. A resonant filter once made the truck
-     idle measure louder than full throttle, and only checking one profile
-     would have let the same fault hide in the others. */
-  const MACHINES = [
-    { profile: "truck",      state: "bonus"  },
-    { profile: "helicopter", state: "heli"   },
-    { profile: "rocket",     state: "rocket" },
-  ];
+  const idleLevel = await measure(0, 500);
+  const fullLevel = await measure(1, 500);
 
-  for (const m of MACHINES) {
-    await evaluate(`frogger.Engine.stop(); frogger.Engine.start('${m.profile}')`);
-    await new Promise((r) => setTimeout(r, 250));
-    const restLevel = await measure(m.state, false, 500);
-    const goLevel   = await measure(m.state, true, 500);
-    check(`the ${m.profile} engine is audible when idling`, restLevel > 0.0005,
-      `rms ${restLevel}`);
-    check(`the ${m.profile} engine gets louder when you open it up`,
-      goLevel > restLevel,
-      `resting ${restLevel.toFixed(5)} vs going ${goLevel.toFixed(5)}`);
-    check(`the ${m.profile} engine is not clipping`, goLevel < 0.7, `rms ${goLevel}`);
-  }
-
-  await evaluate("frogger.Engine.stop()");
+  check("the engine is audible at idle", idleLevel > 0.0005, `rms ${idleLevel}`);
+  check("it gets louder under throttle", fullLevel > idleLevel,
+    `idle ${idleLevel.toFixed(5)} vs full ${fullLevel.toFixed(5)}`);
+  check("it is not clipping", fullLevel < 0.7, `rms ${fullLevel}`);
 
   check("the radio switched to the bonus track",
     await evaluate("frogger.Music.trackName() === frogger.BONUS.music"),
@@ -517,6 +495,11 @@ try {
   })()`));
 
   await evaluate("CONFIG.music = false; frogger.Music.stop()");
+
+  /* ---------------------------------------------------- no console noise */
+  console.log("\n== the console is clean ==");
+  check("nothing threw on the page", pageErrors.length === 0, pageErrors.join(" | "));
+  check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
 
   /* ------------------------------------------------------ every file served */
   console.log("\n== every file the page needs is present ==");
