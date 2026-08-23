@@ -170,6 +170,15 @@ const BONUS = {
 
   /* How long a flattened thing stays gone before it comes back for more. */
   respawnDelay: 1.4,
+
+  /* --- hitting the water ---
+     Driving into the river should be the best moment in the rampage, not a
+     change of background. The truck drops a propeller, throws a bow wave, and
+     the engine note swaps to the speedboat, so it sounds like a different
+     machine because for a moment it is one. */
+  waterSpeed: 1.22,   /* it is quicker on the water than on the road */
+  wakeEvery: 0.035,   /* seconds between blobs of wake thrown off the back */
+  bowWave: 0.9,       /* how big the wave off the nose is, in truck widths */
 };
 
 
@@ -367,7 +376,7 @@ const HELI = {
   alienHits: 2,         /* shots to bring one down */
   alienFireEvery: 1.9,  /* how often one takes a shot at you */
   enemyShotSpeed: 210,
-  heliLives: 3,         /* hits you can take before the mission ends */
+  heliLives: 2,         /* alien hits you can take before the mission ends */
 };
 
 /* --------------------------------------------------------------------------
@@ -513,12 +522,26 @@ const TWISTS = {
      forward on your own, and all you get to do is steer left and right until
      you reach the median. Then you do it again across the river. */
   iceStep: 0.62,      /* seconds between one forced slide forward and the next */
-  iceFirstStep: 0.5,  /* a slightly longer breath before the first one */
+  iceFirstStep: 0.24, /* a short breath before the first one, then you are going */
 
-  /* dark: you only see a circle around the frog, plus car headlights. */
-  darkness: 0.87,     /* how black the rest of the board goes */
-  lampRadius: 2.6,    /* how far you can see, in squares */
-  headlampReach: 3.4, /* how far a car's headlights throw */
+  /* On ice the frog glides rather than hops. The forward slide animates over
+     the whole gap between slides, so it never stops moving, and steering is a
+     long smooth lean rather than a jump onto the next column. Both are eased
+     out of the usual hop curve into something closer to linear, because a hop
+     lands and a glide does not. */
+  iceGlide: 0.34,     /* seconds for a steer to carry across a column */
+  iceEase: 0.18,      /* 0 is a dead-linear slide, 1 is the normal hop curve */
+
+  /* dark: the frog carries a lantern, and that is very nearly all you get.
+
+     The first go at this left the board readable, which meant the level was a
+     normal crossing with a filter over it. It is properly dark now: everything
+     outside the lantern and the headlights is gone, not dimmed. */
+  darkness: 0.975,    /* how black the rest of the board goes */
+  lampRadius: 1.9,    /* how far the lantern throws, in squares */
+  lampWarmth: 0.20,   /* how much warm light it puts back on what it lights */
+  lampSwing: 0.9,     /* how far the lantern swings behind you, in squares */
+  headlampReach: 2.8, /* how far a car's headlights throw */
 
   /* ghost: the world only moves when you do, like a Mario ghost house.
 
@@ -529,8 +552,21 @@ const TWISTS = {
   ghostPerHop: 0.34,  /* seconds of world time each hop buys you */
   ghostDrift: 0.0,    /* nothing moves at all in between */
   ghostCount: 4,
-  ghostSpeed: 62,     /* how fast a ghost closes in while the world is frozen */
-  ghostRetreat: 130,  /* and how fast it backs off once you move */
+
+  /* The ghosts move when YOU move, and only then.
+
+     The first version had it the other way round: they closed in while you
+     stood still and backed off when you moved, so the level rewarded barging
+     forward and punished thinking, which is the opposite of a ghost house.
+     Worse, they never reset, so dying next to one meant dying next to it
+     again, and again.
+
+     Now they hold position while the world is frozen and surge towards you on
+     every hop, and they never retreat. Standing still is safe from them and
+     costs you the clock instead. Every hop is progress you pay for. */
+  ghostSpeed: 108,    /* how fast a ghost closes while the world is running */
+  ghostEdge: 2.2,     /* how far off the board they start, in squares */
+  ghostReach: 0.58,   /* how close is caught, in squares */
 };
 
 

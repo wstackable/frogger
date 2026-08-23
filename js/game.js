@@ -254,9 +254,14 @@ function newFrog() {
     row: START_ROW,
     bestRow: START_ROW,
     dir: 0,
+    /* X and Y animate on their own timers. Steering sideways mid-slide must
+       not restart the forward glide, or the frog snaps back onto its row
+       every time you touch left or right. */
     hopFromX: x,
     hopFromY: laneY(START_ROW),
-    hopT: 1e9,
+    hopXT: 1e9, hopYT: 1e9,
+    hopXDur: CONFIG.hopDuration, hopYDur: CONFIG.hopDuration,
+    glideX: false, glideY: false,
     iceNext: 0,
   };
 }
@@ -453,6 +458,8 @@ function respawn() {
   game.frog = newFrog();
   game.timeLeft = timeCapacity();
   game.carrying = false;
+  game.ghostTime = 0;
+  resetGhosts();
 }
 
 /* The engine idles through the countdown and cuts when the level ends. */
@@ -788,7 +795,10 @@ function update(dt) {
 
   moveObstacles(dt);
   updateFx(dt);
-  if (game.frog) game.frog.hopT += dt * 1000;
+  if (game.frog) {
+    game.frog.hopXT += dt * 1000;
+    game.frog.hopYT += dt * 1000;
+  }
 
   switch (game.state) {
 
@@ -1484,6 +1494,8 @@ const bonus = {
   floats: [],
   shake: 0,
   flash: 0,
+  wet: false,          /* the truck is on the water */
+  nextWake: 0,
 };
 
 /* Is that level a monster truck rampage? */
@@ -1506,6 +1518,8 @@ function startBonusRound() {
   bonus.lastSmash = -99;
   bonus.points = 0;
   bonus.timeLeft = BONUS.duration;
+  bonus.wet = false;
+  bonus.nextWake = 0;
   bonus.particles.length = 0;
   bonus.floats.length = 0;
   bonus.shake = 0;
@@ -1540,8 +1554,39 @@ function smashValue(lane, rules) {
   return pts.car;
 }
 
+/* Which row the truck is sitting on, and whether that row is water. */
+function truckLane() {
+  const cy = bonus.y + TRUCK_SIZE / 2;
+  return lanes.find((l) => cy >= laneY(l.row) && cy < laneY(l.row) + GRID) || null;
+}
+
+function truckAfloat() {
+  const lane = truckLane();
+  return !!lane && lane.type === 'river';
+}
+
+/* The engine is a different machine on the water. Swapping profiles has to go
+   through a stop first: start() is a no-op while it is already running, which
+   is how you end up driving a monster truck that sounds like a helicopter. */
+function setEngineProfile(name) {
+  if (!Engine.running || Engine.profile === name) return;
+  Engine.stop();
+  Engine.start(name);
+}
+
 function updateBonus(dt) {
   bonus.timeLeft -= dt;
+
+  /* --- in and out of the water --- */
+  const wet = truckAfloat();
+  if (wet !== bonus.wet) {
+    bonus.wet = wet;
+    Sound.play('splash');
+    spawnDebris(bonus.x + TRUCK_SIZE / 2, bonus.y + TRUCK_SIZE * 0.8,
+                '#bfe4ff', 18);
+    bonus.shake = Math.max(bonus.shake, 7);
+    setEngineProfile(wet ? 'boat' : 'truck');
+  }
 
   /* --- drive --- */
   let dx = 0, dy = 0;
@@ -1551,8 +1596,28 @@ function updateBonus(dt) {
   if (held.down)  dy += 1;
   if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }   /* no free speed diagonally */
 
-  bonus.x += dx * BONUS.speed * dt;
-  bonus.y += dy * BONUS.speed * dt;
+  const drive = BONUS.speed * (bonus.wet ? BONUS.waterSpeed : 1);
+  bonus.x += dx * drive * dt;
+  bonus.y += dy * drive * dt;
+
+  /* Wake off the back, thrown the opposite way to travel. */
+  if (bonus.wet && (dx || dy) && game.time >= bonus.nextWake) {
+    bonus.nextWake = game.time + BONUS.wakeEvery;
+    const bx = bonus.x + TRUCK_SIZE / 2 - dx * TRUCK_SIZE * 0.42;
+    const by = bonus.y + TRUCK_SIZE / 2 - dy * TRUCK_SIZE * 0.42;
+    for (let i = 0; i < 2; i++) {
+      bonus.particles.push({
+        x: bx + (Math.random() - 0.5) * TRUCK_SIZE * 0.5,
+        y: by + (Math.random() - 0.5) * TRUCK_SIZE * 0.5,
+        vx: -dx * 60 + (Math.random() - 0.5) * 70,
+        vy: -dy * 60 + (Math.random() - 0.5) * 70,
+        life: 0.3 + Math.random() * 0.3,
+        size: 2 + Math.random() * 4,
+        color: Math.random() < 0.5 ? '#ffffff' : '#bfe4ff',
+        foam: true,
+      });
+    }
+  }
 
   /* Stay on the board, HUD rows included as walls. */
   bonus.x = Math.max(0, Math.min(WIDTH - TRUCK_SIZE, bonus.x));
@@ -1587,7 +1652,9 @@ function updateBonus(dt) {
     if (p.life <= 0) { bonus.particles.splice(i, 1); continue; }
     p.x += p.vx * dt;
     p.y += p.vy * dt;
-    p.vy += 420 * dt;                                 /* debris falls */
+    /* Debris falls. Foam does not, it spreads and dies. */
+    if (p.foam) { p.vx *= 0.92; p.vy *= 0.92; }
+    else p.vy += 420 * dt;
   }
   for (let i = bonus.floats.length - 1; i >= 0; i--) {
     if (game.time - bonus.floats[i].at > 1.1) bonus.floats.splice(i, 1);
@@ -2842,9 +2909,10 @@ function hop(dx, dy) {
 
   const frog = game.frog;
 
-  frog.hopFromX = frog.x;
-  frog.hopFromY = laneY(frog.row);
-  frog.hopT = 0;
+  /* On ice, a forced slide animates over the whole gap to the next one, so the
+     frog is always in motion, and a steer leans across rather than jumping. */
+  const onIce = twist('ice');
+  const glide = onIce && !onSolidGround();
 
   /* Every hop winds the boneyard's clock forward a little. */
   if (twist('ghost')) game.ghostTime += TWISTS.ghostPerHop;
@@ -2852,12 +2920,26 @@ function hop(dx, dy) {
   /* Sideways hops land on the column grid even if the frog had drifted while
      riding a log, which is what makes aiming at a lilypad possible. */
   if (dx) {
+    frog.hopFromX = frog.x;
+    frog.hopXT = 0;
+    frog.hopXDur = glide ? TWISTS.iceGlide * 1000 : CONFIG.hopDuration;
+    frog.glideX = glide;
+
     const col = Math.round(frog.x / GRID) + dx;
     frog.x = Math.max(0, Math.min(COLS - 1, col)) * GRID;
     frog.dir = dx;
   }
 
   if (dy) {
+    frog.hopFromY = laneY(frog.row);
+    frog.hopYT = 0;
+    /* A forced slide takes exactly as long as the gap to the next one, which
+       is what turns a row of hops into one continuous glide. */
+    frog.hopYDur = (glide && sliding)
+      ? TWISTS.iceStep * 1000
+      : (glide ? TWISTS.iceGlide * 1000 : CONFIG.hopDuration);
+    frog.glideY = glide;
+
     frog.row = Math.max(0, Math.min(NLANES - 1, frog.row + dy));
     /* Points for genuinely new ground only, so you cannot farm the median. */
     if (frog.row < frog.bestRow) {
@@ -2866,7 +2948,7 @@ function hop(dx, dy) {
     }
   }
 
-  Sound.play('hop');
+  Sound.play(glide ? 'skid' : 'hop');
   checkLane(0);          /* react now, do not wait for the next frame */
 
   /* On ice, moving at all commits you. Once you are off solid ground the
@@ -3411,13 +3493,22 @@ function drawBays() {
 function drawFrog() {
   const frog = game.frog;
 
-  const dur = CONFIG.hopDuration;
-  const p = dur > 0 ? Math.min(1, frog.hopT / dur) : 1;
-  const ease = 1 - Math.pow(1 - p, 3);
+  /* A hop lands, so it eases out hard. A glide does not, so it runs nearly
+     linear. TWISTS.iceEase is how much of the hop curve is left in it. */
+  const curve = (t, gliding) => {
+    const out = 1 - Math.pow(1 - t, 3);
+    return gliding ? t + (out - t) * TWISTS.iceEase : out;
+  };
+
+  const px = frog.hopXDur > 0 ? Math.min(1, frog.hopXT / frog.hopXDur) : 1;
+  const py = frog.hopYDur > 0 ? Math.min(1, frog.hopYT / frog.hopYDur) : 1;
+  const p = Math.min(px, py);
 
   const targetY = laneY(frog.row);
-  const x = p >= 1 ? frog.x  : frog.hopFromX + (frog.x - frog.hopFromX) * ease;
-  const y = p >= 1 ? targetY : frog.hopFromY + (targetY - frog.hopFromY) * ease;
+  const x = px >= 1 ? frog.x
+          : frog.hopFromX + (frog.x - frog.hopFromX) * curve(px, frog.glideX);
+  const y = py >= 1 ? targetY
+          : frog.hopFromY + (targetY - frog.hopFromY) * curve(py, frog.glideY);
 
   if (game.state === 'dying') {
     drawArt(ctx, Art.of('splat'), x, y, GRID, GRID, {
@@ -3429,7 +3520,9 @@ function drawFrog() {
     return;
   }
 
-  const pop = 1 + 0.2 * Math.sin(p * Math.PI);
+  /* The squash is the hop landing. A frog on ice is not landing. */
+  const bouncing = !(frog.glideX || frog.glideY);
+  const pop = bouncing ? 1 + 0.2 * Math.sin(p * Math.PI) : 1;
 
   /* Carrying the lady frog: she rides on your back. */
   if (game.carrying) {
@@ -3453,13 +3546,91 @@ function drawFrog() {
    ========================================================================== */
 
 function drawTruck() {
-  /* A slight bounce while driving, so it never looks like it is sliding. */
+  /* A slight bounce while driving, so it never looks like it is sliding.
+     On the water it rides deeper and rocks slower, like something with a hull
+     rather than something with wheels. */
   const moving = held.left || held.right || held.up || held.down;
-  const bob = moving ? Math.sin(game.time * 26) * GRID * 0.045 : 0;
+  const wet = bonus.wet;
+  const bob = moving
+    ? Math.sin(game.time * (wet ? 9 : 26)) * GRID * (wet ? 0.075 : 0.045)
+    : (wet ? Math.sin(game.time * 4) * GRID * 0.035 : 0);
   const dir = held.right ? 1 : held.left ? -1 : 0;
+
+  const cx = bonus.x + TRUCK_SIZE / 2;
+  const cy = bonus.y + TRUCK_SIZE / 2 + bob;
+
+  if (wet) {
+    let dx = 0, dy = 0;
+    if (held.left)  dx -= 1;
+    if (held.right) dx += 1;
+    if (held.up)    dy -= 1;
+    if (held.down)  dy += 1;
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+
+    drawPropeller(cx - dx * TRUCK_SIZE * 0.5, cy - dy * TRUCK_SIZE * 0.5, moving);
+    drawBowWave(cx, cy, dx, dy, moving);
+  }
 
   drawArt(ctx, Art.of('monsterTruck'), bonus.x, bonus.y + bob,
           TRUCK_SIZE, TRUCK_SIZE, { cells: 1, dir, time: game.time });
+
+  if (wet) {
+    /* A waterline across the wheels, so it is sitting IN the river rather than
+       hovering over it. */
+    ctx.save();
+    ctx.globalAlpha = 0.42;
+    ctx.fillStyle = Art.color('water');
+    ctx.fillRect(bonus.x, bonus.y + bob + TRUCK_SIZE * 0.72,
+                 TRUCK_SIZE, TRUCK_SIZE * 0.28);
+    ctx.restore();
+  }
+}
+
+/* The outboard, bolted on the back the moment it hits the water. */
+function drawPropeller(x, y, spinning) {
+  const r = TRUCK_SIZE * 0.2;
+  const spin = spinning ? game.time * 34 : game.time * 5;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  ctx.fillStyle = '#2a2f3a';
+  ctx.fillRect(-r * 0.22, -r * 0.9, r * 0.44, r * 1.5);
+
+  ctx.rotate(spin);
+  ctx.fillStyle = '#c8d4e4';
+  for (let i = 0; i < 3; i++) {
+    ctx.rotate((Math.PI * 2) / 3);
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.55, r * 0.24, r * 0.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* The wave pushed up by the nose. Two arcs peeling off either side, which is
+   the shape your eye reads as ploughing rather than floating. */
+function drawBowWave(cx, cy, dx, dy, moving) {
+  const ang = Math.atan2(dy, dx);
+  const r = TRUCK_SIZE * BONUS.bowWave * (moving ? 1 : 0.55);
+
+  ctx.save();
+  ctx.translate(cx + dx * TRUCK_SIZE * 0.34, cy + dy * TRUCK_SIZE * 0.34);
+  ctx.rotate(ang);
+
+  for (const side of [-1, 1]) {
+    const pulse = 0.6 + 0.4 * Math.abs(Math.sin(game.time * 12 + side));
+    ctx.globalAlpha = (moving ? 0.7 : 0.35) * pulse;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, TRUCK_SIZE * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(0, side * TRUCK_SIZE * 0.1);
+    ctx.quadraticCurveTo(r * 0.5, side * r * 0.42, -r * 0.25, side * r * 0.72);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 function drawParticles() {
@@ -3795,11 +3966,11 @@ function drawDarkness() {
     n.fill();
   };
 
-  /* What the frog can see. */
-  if (game.frog) {
-    hole(game.frog.x + GRID / 2, laneY(game.frog.row) + GRID / 2,
-         GRID * TWISTS.lampRadius, 1);
-  }
+  /* The lantern. It hangs off the frog and swings, so the pool of light lags
+     behind and sways, which is most of what makes it read as a carried lamp
+     rather than a hole cut in a filter. */
+  const lamp = lanternAt();
+  if (lamp) hole(lamp.x, lamp.y, GRID * TWISTS.lampRadius, 1);
 
   /* Headlights, thrown the way each vehicle is going. */
   for (const lane of lanes) {
@@ -3815,69 +3986,170 @@ function drawDarkness() {
   }
 
   ctx.drawImage(nightLayer, 0, 0, WIDTH, HEIGHT);
+
+  /* Warm light thrown back onto whatever the lantern is lighting. Additive, so
+     it tints rather than washes, and it is the difference between a hole in
+     the dark and a lamp. */
+  if (lamp) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createRadialGradient(lamp.x, lamp.y, 0,
+                                       lamp.x, lamp.y, GRID * TWISTS.lampRadius);
+    g.addColorStop(0, `rgba(255,196,96,${TWISTS.lampWarmth})`);
+    g.addColorStop(0.6, `rgba(255,150,60,${TWISTS.lampWarmth * 0.35})`);
+    g.addColorStop(1, 'rgba(255,140,40,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(lamp.x, lamp.y, GRID * TWISTS.lampRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    drawLantern(lamp);
+  }
+}
+
+/* Where the lantern is hanging right now. It trails the frog and swings, and
+   it keeps swinging for a moment after a hop, like something on a string. */
+function lanternAt() {
+  const frog = game.frog;
+  if (!frog || game.state === 'dying') return null;
+
+  const cx = frog.x + GRID / 2;
+  const cy = laneY(frog.row) + GRID / 2;
+
+  /* Swing is driven by how recently it moved, so it settles when you stand
+     still and lurches when you hop. */
+  const since = Math.min(frog.hopXT, frog.hopYT) / 1000;
+  const energy = Math.max(0, 1 - since / 0.9);
+  const swing = Math.sin(since * 9) * energy * GRID * TWISTS.lampSwing * 0.5;
+
+  return {
+    x: cx + swing - (frog.dir || 0) * GRID * 0.1,
+    y: cy + GRID * 0.16 + Math.abs(swing) * 0.12,
+    swing,
+  };
+}
+
+/* The lamp itself, so there is a thing making the light. */
+function drawLantern(lamp) {
+  const w = GRID * 0.26;
+  const h = GRID * 0.32;
+  const x = lamp.x - w / 2;
+  const y = lamp.y - h / 2;
+
+  /* The wire it hangs from, back to the frog. */
+  const frog = game.frog;
+  if (frog) {
+    ctx.strokeStyle = 'rgba(255,220,150,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(frog.x + GRID / 2, laneY(frog.row) + GRID * 0.45);
+    ctx.lineTo(lamp.x, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = '#2a2118';
+  ctx.fillRect(x - 1, y - h * 0.2, w + 2, h * 0.22);
+  ctx.fillRect(x - 1, y + h * 0.92, w + 2, h * 0.2);
+
+  const flicker = 0.82 + Math.sin(game.time * 17) * 0.06 +
+                  Math.sin(game.time * 7.3) * 0.05;
+  ctx.fillStyle = `rgba(255,214,120,${flicker})`;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = `rgba(255,255,220,${flicker})`;
+  ctx.fillRect(x + w * 0.3, y + h * 0.22, w * 0.4, h * 0.5);
 }
 
 /* --- ghosts drifting about the boneyard --------------------------------- */
 const ghosts = [];
 
-function updateGhosts(dt) {
-  if (!twist('ghost')) { ghosts.length = 0; return; }
-  while (ghosts.length < TWISTS.ghostCount) {
+/* Put them back where they came from: spread across the top of the board and
+   off both sides, well clear of the start line.
+
+   This is called on every respawn, and it is the fix for the thing that made
+   the level unplayable. Ghosts used to stay exactly where they were when you
+   died, which meant respawning underneath one, dying to it, and doing that
+   until the run was over. */
+function resetGhosts() {
+  ghosts.length = 0;
+  const n = TWISTS.ghostCount;
+  const edge = GRID * TWISTS.ghostEdge;
+
+  for (let i = 0; i < n; i++) {
+    /* Alternate sides so they close in from both, and stagger them up the
+       board so they are not one wall coming down at you. */
+    const left = i % 2 === 0;
+    const along = (i + 0.5) / n;
     ghosts.push({
-      x: rng() * WIDTH,
-      y: GRID + rng() * (HEIGHT - GRID * 2),
-      vx: (rng() - 0.5) * 26,
-      vy: (rng() - 0.5) * 18,
-      phase: rng() * 6.28,
+      x: left ? -edge - along * GRID : WIDTH + edge * 0.4 + along * GRID,
+      y: GRID * 1.4 + along * (HEIGHT - GRID * 4.5),
+      phase: i * 1.7,
+      surge: 0,
     });
   }
-  /* This is the whole point of the level. While the world is frozen, which is
-     whenever you are standing still, the ghosts come for you. Move and they
-     back off. So you cannot stop, and you cannot rush either. */
-  const frozen = game.state === 'play' && game.ghostTime <= 0.001;
+}
+
+function updateGhosts(dt) {
+  if (!twist('ghost')) { ghosts.length = 0; return; }
+  if (ghosts.length !== TWISTS.ghostCount) resetGhosts();
+
+  /* The world only runs while you are moving, and the ghosts run with it.
+     Stand still and they stand still too, which makes standing still safe and
+     costs you the clock instead. Every hop is progress you pay for. */
+  const running = game.state === 'play' && game.ghostTime > 0.001;
   const frog = game.frog;
 
   for (const g of ghosts) {
-    if (frog && game.state === 'play') {
-      const fx = frog.x + GRID / 2;
-      const fy = laneY(frog.row) + GRID / 2;
-      const dx = fx - (g.x + GRID / 2);
-      const dy = fy - (g.y + GRID / 2);
-      const d = Math.hypot(dx, dy) || 1;
-      const speed = frozen ? TWISTS.ghostSpeed : -TWISTS.ghostRetreat;
-      g.x += (dx / d) * speed * dt;
-      g.y += (dy / d) * speed * dt;
+    g.surge = Math.max(0, g.surge - dt * 2.4);
+    if (!frog || game.state !== 'play') continue;
 
-      /* Caught. */
-      if (frozen && d < GRID * 0.62) {
-        die('A ghost got you');
-        return;
-      }
-    } else {
-      g.x += g.vx * dt;
-      g.y += g.vy * dt;
+    const fx = frog.x + GRID / 2;
+    const fy = laneY(frog.row) + GRID / 2;
+    const dx = fx - (g.x + GRID / 2);
+    const dy = fy - (g.y + GRID / 2);
+    const d = Math.hypot(dx, dy) || 1;
+
+    if (running) {
+      const mx = (dx / d) * TWISTS.ghostSpeed * dt;
+      const my = (dy / d) * TWISTS.ghostSpeed * dt;
+      g.x += mx;
+      g.y += my;
+      /* Where it came from, exaggerated, for the smear behind it. */
+      g.trailX = mx * 9;
+      g.trailY = my * 9;
+      g.surge = 1;
     }
 
-    if (g.x < -GRID * 2) g.x = WIDTH + GRID;
-    if (g.x > WIDTH + GRID * 2) g.x = -GRID;
-    if (g.y < GRID) g.y = GRID;
-    if (g.y > HEIGHT - GRID * 2) g.y = HEIGHT - GRID * 2;
+    /* Touching one is fatal whether it is moving or not. They do not chase
+       you when you are still, but they are still ghosts. */
+    if (d < GRID * TWISTS.ghostReach) {
+      die('A ghost got you');
+      return;
+    }
   }
 }
 
 function drawGhosts() {
   if (!twist('ghost')) return;
   const art = Art.of('ghost');
-  const frozen = game.ghostTime <= 0.001;
 
   for (const g of ghosts) {
     const bob = Math.sin(game.time * 1.6 + g.phase) * GRID * 0.12;
-    /* Solid and obvious while they are hunting, faint while they are not, so
-       you can see at a glance whether you are safe. */
-    const fade = frozen
-      ? 0.7 + 0.25 * Math.abs(Math.sin(game.time * 4 + g.phase))
-      : 0.2;
-    drawArt(ctx, art, g.x, g.y + bob, GRID * 1.25, GRID * 1.25,
+
+    /* Solid while they are coming for you, faint while they are holding, so
+       one glance tells you whether the last thing you did cost you ground. */
+    const fade = 0.22 + g.surge * 0.7;
+    const size = GRID * (1.25 + g.surge * 0.12);
+
+    /* A smear behind a surging one, so the lunge reads even though it only
+       lasts as long as the hop that caused it. */
+    if (g.surge > 0.05) {
+      drawArt(ctx, art, g.x - (g.trailX || 0), g.y + bob - (g.trailY || 0),
+              size, size,
+              { cells: 1, alpha: fade * 0.3, time: game.time });
+    }
+
+    drawArt(ctx, art, g.x, g.y + bob, size, size,
             { cells: 1, alpha: fade, time: game.time });
   }
 }
@@ -4265,6 +4537,7 @@ function drawOverlay() {
 
   const panelH = showing === 'title' ? TITLE_PANEL_H
                : showing === 'gameOver' ? GRID * 6
+               : showing === 'levelClear' ? CLEAR_PANEL_H
                : GRID * 3.6;
   const panelW = WIDTH - GRID * 0.6;
 
@@ -4329,14 +4602,51 @@ function drawOverlay() {
     }
 
     case 'levelClear': {
+      const C = clearLayout(cy);
+      const nx = nextUp(game.level);
+
       big(); ctx.fillStyle = '#fff';
-      ctx.fillText('LEVEL ' + game.level, cx, cy - GRID * 0.5);
+      ctx.fillText('LEVEL ' + game.level, cx, C.level);
       mid(); ctx.fillStyle = Art.color('accent');
-      ctx.fillText('CLEARED  +' + CONFIG.score.clearLevel, cx, cy + GRID * 0.15);
+      ctx.fillText('CLEARED  +' + CONFIG.score.clearLevel, cx, C.cleared);
+
+      /* A rule across the card, so what you just did and what is coming next
+         read as two separate things. */
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - GRID * 3.4, C.rule);
+      ctx.lineTo(cx + GRID * 3.4, C.rule);
+      ctx.stroke();
+      ctx.restore();
+
       small(); ctx.fillStyle = Art.color('textDim');
-      ctx.fillText(isBonusLevel(game.level + 1)
-        ? 'get ready: MONSTER TRUCK RAMPAGE'
-        : nextLevelWarning(game.level + 1), cx, cy + GRID * 0.85);
+      ctx.fillText(nx.victory ? 'AND THAT IS THE LAST ONE' : 'NEXT UP', cx, C.label);
+
+      if (!nx.victory) {
+        mid(); ctx.fillStyle = '#fff';
+        ctx.fillText(nx.name.toUpperCase(), cx, C.name);
+
+        if (nx.tag) {
+          small(); ctx.fillStyle = Art.color('accent');
+          ctx.fillText(nx.tag, cx, C.tag);
+        }
+
+        small(); ctx.fillStyle = '#dfe3ea';
+        ctx.fillText(nx.blurb, cx, C.blurb);
+
+        if (nx.env) {
+          small(); ctx.fillStyle = Art.color('textDim');
+          ctx.fillText(nx.env, cx, C.env);
+        }
+
+        /* The old "what is new" line, but only when something genuinely is. */
+        if (nx.warning) {
+          small(); ctx.fillStyle = Art.color('timeBar');
+          ctx.fillText(nx.warning, cx, C.warning);
+        }
+      }
       break;
     }
 
@@ -4499,16 +4809,56 @@ function drawLevelList(cx, cy, L) {
 
 /* Tell the player what is new about the level they are walking into. Half
    the fun of the arcade was the moment a new hazard showed up. */
+/* Only fires on a hazard's first appearance. It used to fall through to
+   "everything moves faster now" on every other level, which told you nothing
+   and was the only thing the between-levels screen said. Now the screen names
+   and describes the level you are about to play, and this is the extra line
+   on top when something genuinely new is turning up. */
 function nextLevelWarning(level) {
   const p = PROGRESSION;
   if (level === p.snakeFromLevel && level === p.gatorFromLevel)
-    return 'snakes on the median, crocodiles in the river';
-  if (level === p.snakeFromLevel)   return 'watch out: snakes on the median';
-  if (level === p.gatorFromLevel)   return 'watch out: crocodiles in the river';
-  if (level === p.bayCrocFromLevel) return 'watch out: something in the lilypads';
-  if (level === p.ladyFromLevel)    return 'a lady frog is waiting on a log';
-  const eased = (level - 1) % p.easeEvery === 0;
-  return eased ? 'a breather, then it climbs again' : 'everything moves faster now';
+    return 'new: snakes on the median, crocodiles in the river';
+  if (level === p.snakeFromLevel)   return 'new: snakes on the median';
+  if (level === p.gatorFromLevel)   return 'new: crocodiles in the river';
+  if (level === p.bayCrocFromLevel) return 'new: something hiding in the lilypads';
+  if (level === p.ladyFromLevel)    return 'new: a lady frog is waiting on a log';
+  return '';
+}
+
+const CLEAR_PANEL_H = GRID * 7.4;
+
+/* Where each line of the between-levels card goes. Same reasoning as the
+   title screen: one place, so a test can check they do not collide. */
+function clearLayout(cy) {
+  return {
+    level:   cy - GRID * 2.5,
+    cleared: cy - GRID * 1.85,
+    rule:    cy - GRID * 1.35,
+    label:   cy - GRID * 0.95,
+    name:    cy - GRID * 0.35,
+    tag:     cy + GRID * 0.15,
+    blurb:   cy + GRID * 0.75,
+    env:     cy + GRID * 1.25,
+    warning: cy + GRID * 1.9,
+    panelTop:    cy - CLEAR_PANEL_H / 2,
+    panelBottom: cy + CLEAR_PANEL_H / 2,
+  };
+}
+
+/* Everything the card needs to know about what is coming. */
+function nextUp(clearedLevel) {
+  const n = clearedLevel + 1;
+  if (clearedLevel >= LEVELS.length) return { victory: true };
+
+  const p = planFor(n);
+  return {
+    victory: false,
+    name:    levelName(n),
+    blurb:   p.blurb || '',
+    tag:     levelTag(p),
+    env:     (ENVIRONMENTS[p.env] || {}).label || '',
+    warning: nextLevelWarning(n),
+  };
 }
 
 
@@ -4542,7 +4892,7 @@ function loop(now) {
     const moving = held.left || held.right || held.up || held.down;
     let pedal = 0;
     if (!game.paused) {
-      if (game.state === 'bonus') pedal = moving ? 1 : 0;
+      if (game.state === 'bonus') pedal = moving ? 1 : (bonus.wet ? 0.35 : 0);
       else if (game.state === 'heli') pedal = moving ? 1 : 0.45;  /* rotor never rests */
       else if (game.state === 'rocket') {
         /* Follows the booster now rather than being flat out the whole way,
@@ -4592,8 +4942,11 @@ window.frogger = {
   startGame, startLevel, hop, laneY, diveState, divePhaseName, speedMultiplier,
   updateDives, spawnPuff, spawnRing, updateFx,
   updateSnakes, SNAKE, snakeLane, levelRule,
+  truckLane, truckAfloat, setEngineProfile,
   updateAir, airless, timeCapacity, AIR, spawnAirPocket, airRows,
+  lanternAt, resetGhosts, updateGhosts,
   titleLayout, levelListMetrics, TITLE_PANEL_H,
+  clearLayout, nextUp, CLEAR_PANEL_H, nextLevelWarning,
   updateGators, gatorPhase, gatorBites, GATOR, gatorHeadCell, cellUnder,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };

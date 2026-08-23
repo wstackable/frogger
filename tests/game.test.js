@@ -2094,5 +2094,91 @@ check("the first rocket of the level goes without waiting", (() => {
 })());
 
 
+console.log("\n== the between-levels card ==");
+
+const CLEAR_ORDER = ["level", "cleared", "rule", "label", "name", "tag",
+                     "blurb", "env", "warning"];
+
+check("the card's lines are in order and do not collide", (() => {
+  const C = api.clearLayout(api.HEIGHT / 2);
+  const gap = CONFIG.grid * 0.3;
+  for (let i = 1; i < CLEAR_ORDER.length; i++) {
+    const a = C[CLEAR_ORDER[i - 1]], b = C[CLEAR_ORDER[i]];
+    if (b - a < gap) return `${CLEAR_ORDER[i - 1]} ${a} then ${CLEAR_ORDER[i]} ${b}`;
+  }
+  return true;
+})() === true, "lines collide");
+
+check("every line is inside the card", (() => {
+  const C = api.clearLayout(api.HEIGHT / 2);
+  const pad = CONFIG.grid * 0.25;
+  for (const k of CLEAR_ORDER) {
+    if (C[k] < C.panelTop + pad || C[k] > C.panelBottom - pad) {
+      return `${k} at ${C[k].toFixed(0)}`;
+    }
+  }
+  return true;
+})() === true, "line outside the card");
+
+check("it names and describes the level you are about to play", (() => {
+  for (let n = 1; n < api.LEVELS.length; n++) {
+    const nx = api.nextUp(n);
+    if (nx.victory) return `level ${n} claimed victory too early`;
+    if (!nx.name) return `level ${n + 1} has no name`;
+    if (!nx.blurb) return `level ${n + 1} has no description`;
+    if (nx.name !== api.levelName(n + 1)) return `level ${n + 1} named wrong`;
+  }
+  return true;
+})() === true, "the card is missing something");
+
+check("clearing the last one says so instead of naming a next", (() => {
+  const nx = api.nextUp(api.LEVELS.length);
+  return nx.victory === true;
+})());
+
+check("the special levels are labelled on the card", (() => {
+  const boss = api.LEVELS.findIndex((l) => l.kind === "boat");
+  if (boss <= 0) return true;
+  return api.nextUp(boss).tag.includes("BOSS");
+})(), api.nextUp(Math.max(1, api.LEVELS.findIndex((l) => l.kind === "boat"))).tag);
+
+check("the warning line only fires when something is actually new", (() => {
+  let fired = 0;
+  for (let n = 1; n <= api.LEVELS.length; n++) {
+    if (api.nextLevelWarning(n)) fired++;
+  }
+  /* It used to say something on every single level, which is why it said
+     nothing worth reading. A handful of debuts is the point. */
+  return fired > 0 && fired < api.LEVELS.length / 2;
+})(), `${(() => { let f = 0; for (let n = 1; n <= api.LEVELS.length; n++) if (api.nextLevelWarning(n)) f++; return f; })()} of ${api.LEVELS.length}`);
+
+console.log("\n== two hits and the chopper is done ==");
+
+check("the chopper takes two alien hits, not three", api.HELI.heliLives === 2,
+  String(api.HELI.heliLives));
+
+check("two hits ends the mission", (() => {
+  const heliLevel = api.LEVELS.findIndex(l => l.kind === "heli") + 1;
+  api.startGame(heliLevel);
+  frames(Math.ceil(api.HELI.introTime * 60) + 6);
+  for (let i = 0; i < api.HELI.heliLives; i++) {
+    api.heli.hurtAt = -99;
+    api.takeHeliHit();
+  }
+  frames(4);
+  return game.state === "heliResults";
+})(), game.state);
+
+check("one hit does not", (() => {
+  const heliLevel = api.LEVELS.findIndex(l => l.kind === "heli") + 1;
+  api.startGame(heliLevel);
+  frames(Math.ceil(api.HELI.introTime * 60) + 6);
+  api.heli.hurtAt = -99;
+  api.takeHeliHit();
+  frames(4);
+  return game.state === "heli";
+})(), game.state);
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

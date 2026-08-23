@@ -24,6 +24,9 @@ const SOUNDS = {
   tuck:   { wave: 'sine',     steps: [[300, 0.05], [240, 0.07]],                 gain: 0.06 },
   sink:   { wave: 'sine',     steps: [[240, 0.06], [150, 0.09], [90, 0.12]],     gain: 0.09, crunch: 0.10 },
 
+  /* --- gliding on ice. a swish rather than the hop's two-note blip. --- */
+  skid:   { wave: 'sine',     steps: [[300, 0.10], [360, 0.12]],                gain: 0.05, crunch: 0.10 },
+
   /* --- the speedboat boss --- */
   ram:    { wave: 'sawtooth', steps: [[150, 0.05], [90, 0.09], [60, 0.16]],     gain: 0.24, crunch: 0.5 },
   mine:   { wave: 'square',   steps: [[300, 0.05], [140, 0.09], [70, 0.18]],    gain: 0.22, crunch: 0.42 },
