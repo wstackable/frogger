@@ -55,6 +55,7 @@ const PALETTE = {
   B: '#a86028',       /* log brown */
   b: '#703818',       /* log dark brown */
   n: '#c88848',       /* log tan, the cut ends */
+
 };
 
 
@@ -711,6 +712,64 @@ const SPRITES = {
     '..wwwwwwwwwwwww.',
     '.wwwwwwwwwwwwww.',
     'wwwwwwwwwwwwwwww',
+    '................',
+  ],
+  /* A star to grab on the way up during the rocket level. */
+  star: [
+    '................',
+    '.......YY.......',
+    '.......YY.......',
+    '......YWWY......',
+    '......YWWY......',
+    '.YYYYYYWWYYYYYY.',
+    '.YWWWWWWWWWWWWY.',
+    '..YWWWWWWWWWWY..',
+    '...YYWWWWWWYY...',
+    '.....YWWWWY.....',
+    '....YWWYYWWY....',
+    '...YWWY..YWWY...',
+    '..YWY......YWY..',
+    '..YY........YY..',
+    '................',
+    '................',
+  ],
+  /* Alien attackers for the helicopter level. */
+  alien: [
+    '................',
+    '..K..........K..',
+    '..KK........KK..',
+    '...KKK....KKK...',
+    '....PPPPPPPP....',
+    '...PPPPPPPPPP...',
+    '..PPKKPPPPKKPP..',
+    '..PPKKPPPPKKPP..',
+    '..PPPPPPPPPPPP..',
+    '...PPPPPPPPPP...',
+    '....PPPPPPPP....',
+    '...pp.pppp.pp...',
+    '..pp...pp...pp..',
+    '..p.........p...',
+    '................',
+    '................',
+  ],
+
+  /* What the aliens shoot back with. */
+  enemyShot: [
+    '................',
+    '................',
+    '................',
+    '................',
+    '......PPPP......',
+    '.....PWWWWP.....',
+    '.....PWWWWP.....',
+    '......PPPP......',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
     '................',
   ],
 };

@@ -128,6 +128,10 @@ left to right.** The top log row flows left to right and its gaps are wider
 than a hop, so a lilypad behind you is gone. Take the left one while you can
 and the last one left is the easy one.
 
+> **Picking this up on another machine, or in a fresh session?**
+> Read **[HANDOFF.md](HANDOFF.md)**. It has the architecture, what is done,
+> what is left, and the gotchas that cost real time to find.
+
 ## The files
 
 ```
@@ -143,6 +147,7 @@ js/game.js          the engine: rules, collisions, scoring, the game loop
 assets/             put your own drawings here
 tests/              three suites. worth running. see below.
 tools/              scan-music.js, which rebuilds the track list
+HANDOFF.md          where to pick up, and what is left to do
 ```
 
 Everything you would want to change is in **`js/config.js`**,

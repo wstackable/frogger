@@ -1227,6 +1227,12 @@ check("left and right slide it along the pad", (() => {
   return api.rocket.x > from;
 })());
 
+/* From here on these are checks about the rocket itself, so switch the traffic
+   off. Shoving obstacles off screen does not work: the wrap logic brings them
+   straight back. Dodging is covered separately below. */
+function clearSky() { lanes.forEach(l => { l.active = false; }); }
+clearSky();
+
 check("up launches it", (() => {
   api.held.up = true;
   frames(3);
@@ -1240,15 +1246,42 @@ check("it climbs", (() => {
   return api.rocket.y < from;
 })());
 
+check("flying into traffic shoots you down", (() => {
+  api.startGame(rocketLevel);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  const before = api.rocket.attemptsLeft;
+  /* Park a lorry directly overhead. */
+  const lane = lanes.find(l => l.type === "road" && l.active);
+  lane.obstacles.forEach(o => { o.x = api.rocket.x - GRID; });
+  api.rocket.y = api.laneY(lane.row) + 2;
+  api.rocket.flying = true;
+  frames(3);
+  return api.rocket.outcome === "SHOT DOWN" && api.rocket.attemptsLeft <= before;
+})(), `outcome "${api.rocket.outcome}"`);
+
+check("stars can be collected", (() => {
+  api.startGame(rocketLevel);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  clearSky();
+  const st = api.rocket.stars[0];
+  api.rocket.flying = true;
+  api.rocket.x = st.x;
+  api.rocket.y = st.y - GRID * 0.5;
+  frames(2);
+  return api.rocket.grabbed > 0;
+})(), `grabbed ${api.rocket.grabbed}`);
+
 check("landing on a free pad fills it and scores", (() => {
   /* Line it up dead on a lilypad and let it fly. */
   api.startGame(rocketLevel);
   frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
   const before = game.score;
+  /* Clear the sky. The rocket now crashes into traffic on the way up, which is
+     the point of the level, but here we are testing the landing. */
+  clearSky();
   api.rocket.x = CONFIG.homeCols[2] * GRID;
   api.rocket.flying = true;
   api.rocket.windPhase = 0;
-  /* Cancel the wind so this is a test of the landing, not of the weather. */
   for (let i = 0; i < 400 && api.rocket.y > api.laneY(0); i++) {
     api.rocket.x = CONFIG.homeCols[2] * GRID;
     frames(1);
@@ -1431,6 +1464,61 @@ check("C still overrides the level's colours", (() => {
   api.Art.setPalette(0);
   return manual !== auto && manual === api.PALETTES[forced].bg.water;
 })());
+
+
+console.log("\n== the aliens fight back ==");
+api.startGame(heliLevel);
+frames(Math.ceil(api.HELI.introTime * 60) + 6);
+game.timeLeft = 1e9;
+for (let i = 0; i < 60 * 6 && api.heli.aliens.length === 0; i++) frames(1);
+check("aliens turn up", api.heli.aliens.length > 0, String(api.heli.aliens.length));
+
+check("they come after you", (() => {
+  const a = api.heli.aliens[0];
+  if (!a) return false;
+  const before = Math.hypot(a.x - api.heli.x, a.y - api.heli.y);
+  for (let i = 0; i < 40; i++) frames(1);
+  const after = Math.hypot(a.x - api.heli.x, a.y - api.heli.y);
+  return after < before || after < GRID;
+})());
+
+check("they shoot at you", (() => {
+  for (let i = 0; i < 60 * 5 && api.heli.enemyShots.length === 0; i++) frames(1);
+  return api.heli.enemyShots.length > 0;
+})(), String(api.heli.enemyShots.length));
+
+check("getting shot costs armour, not a frog", (() => {
+  const lives = game.lives;
+  const hits = api.heli.hits;
+  api.heli.hurtAt = -99;
+  api.takeHeliHit();
+  return api.heli.hits === hits + 1 && game.lives === lives;
+})());
+
+check("running out of armour ends the mission early", (() => {
+  api.heli.hurtAt = -99;
+  while (api.heli.hits < api.HELI.heliLives) {
+    api.heli.hurtAt = -99;
+    api.takeHeliHit();
+  }
+  frames(4);
+  return game.state === "heliResults";
+})(), game.state);
+
+check("shooting an alien scores", (() => {
+  api.startGame(heliLevel);
+  frames(Math.ceil(api.HELI.introTime * 60) + 6);
+  for (let i = 0; i < 60 * 6 && api.heli.aliens.length === 0; i++) frames(1);
+  const a = api.heli.aliens[0];
+  if (!a) return false;
+  const before = api.bonus.points;
+  /* Put enough bullets straight through it. */
+  for (let n = 0; n < api.HELI.alienHits; n++) {
+    api.heli.bullets.push({ x: a.x + GRID / 2, y: a.y + GRID / 2, vx: 0, vy: 0 });
+    frames(1);
+  }
+  return api.bonus.points > before;
+})(), `points ${api.bonus.points}`);
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

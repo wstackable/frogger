@@ -26,6 +26,8 @@ const SOUNDS = {
               gain: 0.24, crunch: 0.55 },
   splash:   { wave: 'sine',     steps: [[420,0.05],[260,0.08],[150,0.14]], gain: 0.18, crunch: 0.30 },
   bonus:    { wave: 'square',   steps: [[520,0.09],[660,0.09],[880,0.09],[1320,0.26]], gain: 0.18 },
+  star:     { wave: 'triangle', steps: [[880, 0.05], [1320, 0.05], [1760, 0.09]], gain: 0.14 },
+  crash:    { wave: 'sawtooth', steps: [[220,0.06],[110,0.10],[55,0.20]], gain: 0.24, crunch: 0.5 },
   shot:     { wave: 'square',   steps: [[880, 0.02], [420, 0.03]],              gain: 0.07 },
   fanfare:  { wave: 'triangle', steps: [[660,0.10],[880,0.10],[1100,0.10],[1320,0.10],[1760,0.34]], gain: 0.18 },
 };

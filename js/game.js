@@ -1214,9 +1214,11 @@ const rocket = {
   attemptsLeft: 0,
   landed: 0,
   points: 0,
+  grabbed: 0,
   wind: 0,
   windPhase: 0,
   trail: [],
+  stars: [],
   outcome: '',
   outcomeAt: -99,
 };
@@ -1225,6 +1227,7 @@ function startRocket() {
   rocket.attemptsLeft = ROCKET.attempts;
   rocket.landed = 0;
   rocket.points = 0;
+  rocket.grabbed = 0;
   rocket.trail.length = 0;
   rocket.outcome = '';
   rocket.outcomeAt = -99;
@@ -1238,6 +1241,23 @@ function resetRocket() {
   rocket.flying = false;
   rocket.wind = 0;
   rocket.trail.length = 0;
+  scatterStars();
+}
+
+/* Stars sit between the rows on the way up. They are worth going out of your
+   way for, which is the whole reason to steer rather than just hold still and
+   hope the wind is kind. */
+function scatterStars() {
+  rocket.stars.length = 0;
+  const rows = NLANES - 2;
+  for (let i = 0; i < ROCKET.starsPerFlight; i++) {
+    const row = 1 + Math.floor(((i + 0.5) / ROCKET.starsPerFlight) * rows);
+    rocket.stars.push({
+      x: GRID * 0.6 + rng() * (WIDTH - GRID * 2.2),
+      y: laneY(row) + GRID * 0.5,
+      taken: false,
+    });
+  }
 }
 
 function launchRocket() {
@@ -1288,6 +1308,40 @@ function updateRocket(dt) {
   rocket.trail.push({ x: rocket.x + GRID / 2, y: rocket.y + GRID, at: game.time });
   if (rocket.trail.length > 90) rocket.trail.shift();
 
+  const cx = rocket.x + GRID / 2;
+  const cy = rocket.y + GRID / 2;
+  const r = GRID * ROCKET.hitbox * 0.5;
+
+  /* Stars. */
+  for (const st of rocket.stars) {
+    if (st.taken) continue;
+    if (Math.abs(st.x + GRID / 2 - cx) < GRID * 0.6 &&
+        Math.abs(st.y - cy) < GRID * 0.6) {
+      st.taken = true;
+      rocket.grabbed++;
+      rocket.points += ROCKET.starPoints;
+      addScore(ROCKET.starPoints);
+      Sound.play('star');
+      spawnDebris(st.x + GRID / 2, st.y, '#ffe070', 8);
+      bonus.floats.push({ text: `+${ROCKET.starPoints}`, x: st.x + GRID / 2,
+                          y: st.y, at: game.time, big: false });
+    }
+  }
+
+  /* The traffic and the river are in the way. This is the level. */
+  for (const lane of smashableLanes()) {
+    if (!laneActive(lane)) continue;
+    const ly = laneY(lane.row);
+    if (cy + r < ly || cy - r > ly + GRID) continue;
+    for (const ob of lane.obstacles) {
+      if (ob.deadUntil > game.time) continue;
+      if (cx + r > ob.x + HIT_INSET && cx - r < ob.x + ob.cells * GRID - HIT_INSET) {
+        crashRocket();
+        return;
+      }
+    }
+  }
+
   /* Reached the bank. Did we line it up? */
   if (rocket.y <= laneY(0)) {
     const bay = CONFIG.homeCols.findIndex(
@@ -1326,6 +1380,16 @@ function updateRocket(dt) {
   }
 }
 
+function crashRocket() {
+  Sound.play('crash');
+  spawnDebris(rocket.x + GRID / 2, rocket.y + GRID / 2, '#ff7020', 24);
+  bonus.shake = 11;
+  bonus.flash = 0.4;
+  rocketOutcome('SHOT DOWN');
+  resetRocket();
+  if (!rocket.attemptsLeft && rocket.landed === 0) game.lives--;
+}
+
 function finishRocket() {
   Sound.play(rocket.landed ? 'fanfare' : 'over');
   setState('rocketResults');
@@ -1346,6 +1410,11 @@ const heli = {
   nextShot: 0,
   bullets: [],
   timeLeft: 0,
+  aliens: [],
+  enemyShots: [],
+  nextAlien: 0,
+  hits: 0,
+  hurtAt: -99,
 };
 
 function startHeli() {
@@ -1354,6 +1423,11 @@ function startHeli() {
   heli.aim = [0, -1];
   heli.nextShot = 0;
   heli.bullets.length = 0;
+  heli.aliens.length = 0;
+  heli.enemyShots.length = 0;
+  heli.nextAlien = HELI.alienEvery * 0.6;
+  heli.hits = 0;
+  heli.hurtAt = -99;
   heli.timeLeft = HELI.duration;
 
   bonus.smashed = 0;
@@ -1427,6 +1501,8 @@ function updateHeli(dt) {
     if (hit) heli.bullets.splice(i, 1);
   }
 
+  updateAliens(dt);
+
   if (bonus.combo && game.time - bonus.lastSmash > HELI.comboWindow) bonus.combo = 0;
 
   for (let i = bonus.particles.length - 1; i >= 0; i--) {
@@ -1447,6 +1523,8 @@ function updateHeli(dt) {
     addScore(bonus.points);
     calmDown();
     heli.bullets.length = 0;
+    heli.aliens.length = 0;
+    heli.enemyShots.length = 0;
     Sound.play('fanfare');
     setState('heliResults');
   }
@@ -1656,6 +1734,124 @@ function drawPauseMenu() {
   ctx.font = `${Math.round(GRID * 0.24)}px "Courier New", monospace`;
   ctx.fillStyle = Art.color('textDim');
   ctx.fillText('up / down then SPACE  ::  ESC closes', cx, cy + GRID * 1.75);
+}
+
+
+
+
+/* --------------------------------------------------------------------------
+   The aliens.
+
+   Traffic cannot fight back, which made the helicopter level a shooting
+   gallery. These fly in from the top, drift towards you and take shots, so
+   there is a reason to keep moving.
+   -------------------------------------------------------------------------- */
+function updateAliens(dt) {
+  heli.nextAlien -= dt;
+  if (heli.nextAlien <= 0 && heli.aliens.length < HELI.alienMax) {
+    heli.nextAlien = HELI.alienEvery;
+    heli.aliens.push({
+      x: GRID + rng() * (WIDTH - GRID * 2),
+      y: GRID * 1.2,
+      hp: HELI.alienHits,
+      nextFire: HELI.alienFireEvery * (0.5 + rng()),
+      wobble: rng() * 6.28,
+      hurt: -99,
+    });
+    Sound.play('bonus');
+  }
+
+  const hx = heli.x + TRUCK_SIZE / 2;
+  const hy = heli.y + TRUCK_SIZE / 2;
+
+  for (let i = heli.aliens.length - 1; i >= 0; i--) {
+    const a = heli.aliens[i];
+
+    /* Drift towards the helicopter, weaving as they come. */
+    const dx = hx - (a.x + GRID / 2);
+    const dy = hy - (a.y + GRID / 2);
+    const d = Math.hypot(dx, dy) || 1;
+    a.wobble += dt * 3;
+    a.x += (dx / d) * HELI.alienSpeed * dt + Math.cos(a.wobble) * 40 * dt;
+    a.y += (dy / d) * HELI.alienSpeed * dt * 0.7;
+    a.x = Math.max(0, Math.min(WIDTH - GRID, a.x));
+    a.y = Math.max(GRID, Math.min(HEIGHT - GRID * 2, a.y));
+
+    a.nextFire -= dt;
+    if (a.nextFire <= 0) {
+      a.nextFire = HELI.alienFireEvery * (0.7 + rng() * 0.6);
+      const sx = a.x + GRID / 2, sy = a.y + GRID / 2;
+      const tx = hx - sx, ty = hy - sy;
+      const td = Math.hypot(tx, ty) || 1;
+      heli.enemyShots.push({
+        x: sx, y: sy,
+        vx: (tx / td) * HELI.enemyShotSpeed,
+        vy: (ty / td) * HELI.enemyShotSpeed,
+      });
+      Sound.play('shot');
+    }
+
+    for (let b = heli.bullets.length - 1; b >= 0; b--) {
+      const bl = heli.bullets[b];
+      if (Math.abs(bl.x - (a.x + GRID / 2)) < GRID * 0.5 &&
+          Math.abs(bl.y - (a.y + GRID / 2)) < GRID * 0.5) {
+        heli.bullets.splice(b, 1);
+        a.hp--;
+        a.hurt = game.time;
+        spawnDebris(bl.x, bl.y, '#ff70e0', 6);
+        Sound.play('smash');
+
+        if (a.hp <= 0) {
+          heli.aliens.splice(i, 1);
+          bonus.combo = Math.min(HELI.comboMax, bonus.combo + 1);
+          bonus.lastSmash = game.time;
+          bonus.bestCombo = Math.max(bonus.bestCombo, bonus.combo);
+          bonus.smashed++;
+          const gained = HELI.alienPoints * bonus.combo;
+          bonus.points += gained;
+          bonus.floats.push({ text: '+' + gained, x: a.x + GRID / 2,
+                              y: a.y, at: game.time, big: true });
+          spawnDebris(a.x + GRID / 2, a.y + GRID / 2, '#ff40c0', 20);
+          bonus.shake = 10;
+          bonus.flash = 0.4;
+          Sound.play('explode');
+          Engine.rev(0.3);
+        }
+        break;
+      }
+    }
+  }
+
+  for (let i = heli.enemyShots.length - 1; i >= 0; i--) {
+    const sh = heli.enemyShots[i];
+    sh.x += sh.vx * dt;
+    sh.y += sh.vy * dt;
+
+    if (sh.x < -20 || sh.x > WIDTH + 20 || sh.y < 0 || sh.y > HEIGHT) {
+      heli.enemyShots.splice(i, 1);
+      continue;
+    }
+
+    if (Math.abs(sh.x - hx) < TRUCK_SIZE * 0.3 &&
+        Math.abs(sh.y - hy) < TRUCK_SIZE * 0.3) {
+      heli.enemyShots.splice(i, 1);
+      takeHeliHit();
+    }
+  }
+}
+
+/* Getting shot does not kill you outright: it costs armour and ends the
+   mission early if that runs out. Losing a frog on a bonus level would sting. */
+function takeHeliHit() {
+  if (game.time - heli.hurtAt < 0.8) return;
+  heli.hits++;
+  heli.hurtAt = game.time;
+  bonus.shake = 12;
+  bonus.flash = 0.5;
+  bonus.combo = 0;
+  spawnDebris(heli.x + TRUCK_SIZE / 2, heli.y + TRUCK_SIZE / 2, '#ffaa30', 18);
+  Sound.play('crash');
+  if (heli.hits >= HELI.heliLives) heli.timeLeft = 0.01;
 }
 
 
@@ -2503,6 +2699,7 @@ function drawBonusOverlay() {
     const tally = screen.kind === 'rocket' ? rocket.landed : bonus.smashed;
     const rows = screen.kind === 'rocket'
       ? [['LANDED',  `${Math.round(rocket.landed * reveal)} of ${ROCKET.attempts}`],
+         ['STARS',   String(Math.round(rocket.grabbed * reveal))],
          ['BONUS',   '+' + Math.round(rocket.points * reveal)]]
       : [['DESTROYED',  String(Math.round(bonus.smashed * reveal))],
          ['BEST COMBO', 'x' + Math.round(bonus.bestCombo * reveal)],
@@ -2702,6 +2899,14 @@ function drawRocket() {
   }
   ctx.globalAlpha = 1;
 
+  /* The stars, spinning gently so they read as collectable. */
+  for (const st of rocket.stars) {
+    if (st.taken) continue;
+    const pulse = 0.82 + 0.18 * Math.sin(game.time * 4 + st.x);
+    drawArt(ctx, Art.of('star'), st.x, st.y - GRID * 0.5, GRID, GRID,
+            { cells: 1, scale: pulse, time: game.time });
+  }
+
   drawArt(ctx, Art.of('rocket'), rocket.x, rocket.y, GRID, GRID,
           { cells: 1, time: game.time });
 
@@ -2748,6 +2953,14 @@ function drawRocketHud() {
   ctx.font = font(GRID * 0.38);
   ctx.fillText('x' + rocket.attemptsLeft, 10, y + GRID * 0.7);
 
+  ctx.textAlign = 'center';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.28);
+  ctx.fillText('STARS', WIDTH / 2, y + GRID * 0.3);
+  ctx.fillStyle = Art.color('accent');
+  ctx.font = font(GRID * 0.38);
+  ctx.fillText(`${rocket.grabbed}`, WIDTH / 2, y + GRID * 0.7);
+
   ctx.textAlign = 'right';
   ctx.fillStyle = Art.color('textDim');
   ctx.font = font(GRID * 0.28);
@@ -2768,6 +2981,17 @@ function drawRocketHud() {
 
 /* --- the helicopter ---------------------------------------------------- */
 function drawHeli() {
+  for (const a of heli.aliens) {
+    const hurt = game.time - a.hurt < 0.09;
+    drawArt(ctx, Art.of('alien'), a.x, a.y, GRID, GRID,
+            { cells: 1, time: game.time, scale: hurt ? 1.2 : 1 });
+  }
+
+  for (const sh of heli.enemyShots) {
+    drawArt(ctx, Art.of('enemyShot'), sh.x - GRID * 0.28, sh.y - GRID * 0.28,
+            GRID * 0.56, GRID * 0.56, { cells: 1, time: game.time });
+  }
+
   for (const b of heli.bullets) {
     drawArt(ctx, Art.of('bullet'), b.x - GRID * 0.25, b.y - GRID * 0.25,
             GRID * 0.5, GRID * 0.5, { cells: 1, time: game.time });
@@ -2783,8 +3007,11 @@ function drawHeli() {
   ctx.globalAlpha = 1;
 
   const bob = Math.sin(game.time * 7) * GRID * 0.06;
+  const justHit = game.time - heli.hurtAt < 0.5;
+  const blink = justHit && Math.floor(game.time * 14) % 2 === 0;
   drawArt(ctx, Art.of('helicopter'), heli.x, heli.y + bob, TRUCK_SIZE, TRUCK_SIZE,
-          { cells: 1, dir: heli.aim[0], time: game.time });
+          { cells: 1, dir: heli.aim[0], time: game.time,
+            alpha: blink ? 0.35 : 1 });
 }
 
 function drawHeliHud() {
@@ -2811,10 +3038,11 @@ function drawHeliHud() {
   ctx.textAlign = 'right';
   ctx.fillStyle = Art.color('textDim');
   ctx.font = font(GRID * 0.3);
-  ctx.fillText('DESTROYED', WIDTH - 10, GRID * 0.28);
-  ctx.fillStyle = '#fff';
-  ctx.font = font(GRID * 0.42);
-  ctx.fillText(String(bonus.smashed), WIDTH - 10, GRID * 0.72);
+  ctx.fillText('ARMOUR', WIDTH - 10, GRID * 0.28);
+  const armour = Math.max(0, HELI.heliLives - heli.hits);
+  ctx.fillStyle = armour <= 1 ? Art.color('timeLow') : Art.color('timeBar');
+  ctx.font = font(GRID * 0.38);
+  ctx.fillText('#'.repeat(armour) || '--', WIDTH - 10, GRID * 0.72);
 
   const y = HEIGHT - GRID;
   ctx.fillStyle = Art.color('hudBg');
@@ -3276,6 +3504,7 @@ window.frogger = {
   hazard, twist, applyPlan, enterLevel, buildObstacles, trafficRows,
   onSolidGround, updateSlide, slideProgress,
   rocket, heli, startRocket, startHeli, updateRocket, updateHeli, ROCKET, HELI,
+  scatterStars, crashRocket, updateAliens, takeHeliHit,
   TWISTS, RIVER_PRESETS, LEVEL_LOOP, levelTag, clampPickedLevel, ghosts,
   ENGINE_PROFILES, SOUNDS, PALETTES, engineProfileFor,
   advanceLevel, startBonusRound, inBonus, held, smashableLanes,

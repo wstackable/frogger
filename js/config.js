@@ -225,7 +225,7 @@ const LEVELS = [
     speed: 0.86, roadLanes: 4, river: 'easy',   hazards: ['fly', 'diving'] },
 
   { name: 'Rocket Ride',
-    blurb: 'fly straight up through the traffic. dodge everything.',      kind: 'rocket', env: 'space' },
+    blurb: 'straight up through the traffic. dodge, grab stars, land.',      kind: 'rocket', env: 'space' },
 
   { name: 'Slippery Bank',
     blurb: 'you cannot stop. steer the slide and hope.',    kind: 'cross',  env: 'arctic',
@@ -238,7 +238,7 @@ const LEVELS = [
     rules: { dark: true } },
 
   { name: 'Chopper Support',
-    blurb: 'you have a machine gun. the traffic does not.',  kind: 'heli',   env: 'desert' },
+    blurb: 'clear the road, and mind the aliens. they shoot back.',  kind: 'heli',   env: 'desert' },
 
   { name: 'Snake Pit',
     blurb: 'snakes on the median. the safe row is not safe.',        kind: 'cross',  env: 'jungle',
@@ -339,6 +339,17 @@ const HELI = {
   comboWindow: 1.8,
   comboMax: 12,
   respawnDelay: 1.2,
+
+  /* Aliens. The traffic cannot fight back, so these do: they fly in, chase you
+     and shoot, which turns the level from a shooting gallery into a fight. */
+  alienEvery: 2.2,      /* seconds between one arriving and the next */
+  alienMax: 5,
+  alienSpeed: 95,
+  alienPoints: 400,
+  alienHits: 2,         /* shots to bring one down */
+  alienFireEvery: 1.9,  /* how often one takes a shot at you */
+  enemyShotSpeed: 210,
+  heliLives: 3,         /* hits you can take before the mission ends */
 };
 
 /* --------------------------------------------------------------------------
@@ -697,6 +708,9 @@ const THEMES = {
       bullet:       { draw: 'pixels', sprite: 'bullet' },
       ghost:        { draw: 'pixels', sprite: 'ghost' },
       gravestone:   { draw: 'pixels', sprite: 'gravestone' },
+      star:         { draw: 'pixels', sprite: 'star' },
+      alien:        { draw: 'pixels', sprite: 'alien' },
+      enemyShot:    { draw: 'pixels', sprite: 'enemyShot' },
       boat:    { draw: 'pixels', sprite: 'boat', fit: 'repeat' },
 
       log:     { draw: 'pixels', sprite: 'logMid', fit: 'repeat',
@@ -750,6 +764,9 @@ const THEMES = {
       bullet:       { draw: 'emoji', glyph: '✨', scale: 0.8 },
       ghost:        { draw: 'emoji', glyph: '👻' },
       gravestone:   { draw: 'emoji', glyph: '🪦' },
+      star:         { draw: 'emoji', glyph: '⭐' },
+      alien:        { draw: 'emoji', glyph: '👾' },
+      enemyShot:    { draw: 'emoji', glyph: '🔴', scale: 0.6 },
       boat:    { draw: 'emoji', glyph: '⛵', fit: 'repeat' },
 
       log:     { draw: 'emoji', glyph: '🪵', fit: 'repeat' },
