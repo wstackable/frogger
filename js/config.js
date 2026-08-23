@@ -3,230 +3,267 @@
    --------------------------------------------------------------------------
    THIS IS THE FILE TO EDIT.
 
-   Everything you can tune lives here. The game engine (js/game.js) reads
-   these values and never hardcodes them, so you can change how the game
-   plays and how it looks without touching the engine at all.
+   Everything you can tune lives here. The engine (js/game.js) reads these
+   values and hardcodes nothing, so you can change how the game plays and how
+   it looks without touching the engine.
 
-   Three sections:
-     1. SETTINGS  - how the game plays (lives, speed, timer, scoring)
-     2. LANES     - the layout of the board, row by row
-     3. THEMES    - how everything looks (this is where the art lives)
+     1. SETTINGS     how the game plays
+     2. PROGRESSION  how each level gets harder
+     3. LANES        the board, row by row
+     4. THEMES       how it all looks
 
    Save the file, refresh the browser. That's the whole loop.
    ========================================================================== */
 
 
 /* ==========================================================================
-   1. SETTINGS  ::  how the game plays
+   1. SETTINGS
    ========================================================================== */
 
 const CONFIG = {
 
-  /* Which theme from section 3 to use. Try 'retro' for the 1981 arcade look. */
-  theme: 'emoji',
+  /* Which theme from section 4. 'arcade' is the faithful 1981 pixel look.
+     'emoji' is the friendly one. */
+  theme: 'arcade',
 
-  /* Size of one square on the board, in pixels. Everything scales off this. */
-  grid: 48,
+  grid: 48,          /* pixels per square. everything scales off this. */
+  cols: 13,          /* squares across. keep it odd so the frog starts centred. */
+  tileGap: 8,        /* visual gap between rows */
 
-  /* How many squares wide the board is. Must be an odd number so the frog
-     can start in the exact middle. */
-  cols: 13,
+  lives: 5,          /* the arcade cabinet was switchable between 3, 5 and 7 */
+  timeLimit: 30,     /* seconds to get one frog home */
+  hopDuration: 80,   /* ms of hop animation. 0 = instant snap. */
 
-  /* Visual gap between rows, in pixels. Makes the lanes read as separate. */
-  tileGap: 10,
-
-  /* How many frogs you get. */
-  lives: 5,
-
-  /* Seconds to get one frog home before it runs out of time. */
-  timeLimit: 30,
-
-  /* Milliseconds the hop animation takes. 0 = instant snap (very arcade).
-     90 feels smooth. Above ~150 starts to feel laggy. */
-  hopDuration: 90,
-
-  /* How much faster everything moves each time you clear a level.
-     0.12 = 12% faster per level. Set to 0 for no difficulty ramp. */
-  speedRampPerLevel: 0.12,
-
-  /* Beeps and boops, generated in code (no sound files needed). */
   sound: true,
+  touchControls: 'auto',   /* true | false | 'auto' (show on touchscreens) */
 
-  /* On-screen arrow buttons. true, false, or 'auto' (show on touchscreens). */
-  touchControls: 'auto',
-
-  /* Which columns have a home bay at the top. Default is 5 bays, evenly
-     spaced across 13 columns. */
+  /* Which columns have a lilypad. Five bays across 13 columns. */
   homeCols: [0, 3, 6, 9, 12],
 
-  /* --- Difficulty knobs. Turn these on to get closer to the real arcade. --- */
-  difficulty: {
-    /* In the arcade, jumping into the bank BETWEEN two home bays kills you.
-       false is kinder for younger kids: you just stand there harmlessly. */
-    hitBankIsDeath: false,
-
-    /* Turtles that periodically dive underwater. They blink first as a
-       warning. Set false if the kids find them too mean. */
-    divingTurtles: true,
-
-    /* Seconds in each phase of a turtle's dive cycle. */
-    diveUp: 4.0,
-    diveBlink: 1.5,
-    diveDown: 1.5,
+  /* --- The arcade rules. All true is faithful. Turn them off to be kind. --- */
+  rules: {
+    bankIsDeath: true,       /* landing on the bank between two lilypads kills */
+    occupiedBayIsDeath: true,/* jumping into a filled lilypad kills */
+    edgeIsDeath: true,       /* riding a log off the side of the screen kills */
+    divingTurtles: true,     /* turtle groups that sink */
+    gatorMouthIsDeath: true, /* the front of a crocodile kills */
   },
 
-  /* --- Points. --- */
+  /* --- Points, straight from the arcade. --- */
   score: {
-    forwardHop: 10,        /* per row of NEW forward progress */
-    reachHome: 50,         /* getting one frog into a bay */
-    perSecondLeft: 20,     /* bonus per whole second left on the timer */
-    clearLevel: 1000,      /* filling all the bays */
-    extraLifeEvery: 5000,  /* free frog at each multiple of this */
+    forwardHop: 10,          /* per row of new forward progress */
+    reachHome: 50,           /* per frog delivered */
+    perHalfSecondLeft: 10,   /* time bonus, so 20 a second */
+    fly: 200,                /* eating a fly in a lilypad */
+    ladyFrog: 200,           /* escorting the lady frog home */
+    clearLevel: 1000,        /* all five lilypads filled */
+    extraLifeEvery: 20000,   /* a free frog at each multiple */
+  },
+
+  /* --- Timings for the moving hazards, in seconds. --- */
+  timing: {
+    /* A turtle group's dive cycle: up, then tucking in as a warning, then
+       under. Only alternate groups dive, so there is always somewhere to
+       stand. Lengthen diveUp to be kinder. */
+    diveUp: 4.5,
+    diveTuck: 1.2,
+    diveUnder: 1.6,
+
+    /* How long a fly or a crocodile sits in a lilypad, and the gap between
+       one appearing and the next. */
+    baySpawnGap: 5.0,
+    bayHazardLife: 6.0,
+
+    /* The lady frog rides a log until she is picked up or drifts away. */
+    ladySpawnGap: 9.0,
+
+    /* A crocodile in a lilypad is safe while it is still surfacing, exactly
+       like the arcade. This is how long that grace period lasts. */
+    bayCrocSurfacing: 1.0,
   },
 };
 
 
 /* ==========================================================================
-   2. LANES  ::  the board, row by row, top to bottom
+   2. PROGRESSION  ::  how each level gets harder
    --------------------------------------------------------------------------
-   Row 0 is the top (the home bays). The last row is where the frog starts.
+   The arcade did two things as you went up the levels: it sped everything up,
+   and it introduced new KINDS of hazard. Speed alone gets boring and then
+   impossible, so the new hazards are what keep it interesting.
 
-   Each lane is one object:
+   It also eased off slightly every five levels before climbing again, which
+   is what stops it feeling like a wall. That is `easeEvery` below.
+   ========================================================================== */
 
-     type      'home'  the goal bays at the top
-               'river' you DROWN here unless you are riding something
-               'road'  you get SQUASHED here if something hits you
-               'safe'  nothing spawns, nothing can hurt you
+const PROGRESSION = {
 
-     kind      which art to use from the theme (section 3). Any name you like,
-               as long as the theme has a matching entry.
+  speedStep: 0.10,     /* +10% obstacle speed per level */
+  easeEvery: 5,        /* every 5 levels, back off a bit before climbing again */
+  easeAmount: 0.25,    /* how much of the accumulated speed to give back */
 
-     length    how many grid squares long each obstacle is (4 = a long log)
+  /* Which level each hazard shows up on. Set any of these to 99 to switch
+     that hazard off, or to 1 to have it from the very start. */
+  flyFromLevel:      1,   /* bonus fly in a lilypad, worth 200 */
+  ladyFromLevel:     2,   /* the lady frog on a log, worth 200 */
+  bayCrocFromLevel:  2,   /* a crocodile lurking in a lilypad */
+  snakeFromLevel:    3,   /* snakes patrolling the median, per the arcade */
+  gatorFromLevel:    3,   /* crocodiles replacing logs in the river */
 
-     spacing   the gap pattern between obstacles, in grid squares, repeated
-               forever. [3] means "always 3 squares apart". [3, 8] means
-               "3 apart, then 8 apart, then 3, then 8..." which is how you
-               make convoys with big gaps to sneak through.
-               A 0 means touching, so [0,0,1] makes groups of three.
+  /* How many of a river row's logs turn into crocodiles once gators are in
+     play. 3 means every third log. */
+  gatorEveryNthLog: 3,
+};
 
-     speed     pixels per frame. NEGATIVE moves left, POSITIVE moves right.
-               Around 0.5 is slow, 1.5 is quite fast.
 
-     diving    (turtles only) this group submerges now and then
+/* ==========================================================================
+   3. LANES  ::  the board, row by row, top to bottom
+   --------------------------------------------------------------------------
+   This is the arcade layout. Row 0 is the lilypads. The last row is the
+   start. In between, five river rows and five road rows either side of the
+   median, exactly like the cabinet.
 
-   Add a row, delete a row, reorder them. The engine adapts and the canvas
-   resizes itself to fit however many rows you leave here.
+     type     'home'   the five lilypads
+              'river'  you DROWN unless you are standing on something
+              'road'   anything in this row KILLS you
+              'safe'   nothing can hurt you
+              'start'  where the frog spawns
+
+     kind     which art to use from the theme in section 4
+
+     length   how many squares long each obstacle is. A turtle group of 3 is
+              length 3. A long log is length 6.
+
+     spacing  the gaps between obstacles, in squares, repeating forever.
+              [3] is always 3 apart. [3, 8] alternates, which makes convoys
+              with a gap you can time your run through.
+
+     speed    pixels per frame. NEGATIVE goes left, POSITIVE goes right.
+
+     dive     'alternate' means every other group sinks, so there is always a
+              dry one. 'all' means the whole row sinks, which is unfair and
+              was never how the arcade did it.
+
+     bounce   turns round at the edges instead of wrapping (snakes do this)
+
+     fromLevel  this row stays empty until you reach that level
+
+   Add rows, delete rows, reorder them. The board resizes itself.
    ========================================================================== */
 
 const LANES = [
 
-  /* --- The goal. Get five frogs into the five bays to clear the level. --- */
+  /* --- The lilypads. Five frogs home clears the level. ------------------- */
   { type: 'home' },
 
-  /* --- The river. Ride the logs and turtles or you drown. ---------------- */
-  { type: 'river', kind: 'log',    length: 4, spacing: [2],                speed:  0.75 },
-  { type: 'river', kind: 'turtle', length: 1, spacing: [0,2,0,2,0,2,0,4],  speed: -1.00, diving: true },
-  { type: 'river', kind: 'log',    length: 7, spacing: [2],                speed:  1.50 },
-  { type: 'river', kind: 'log',    length: 3, spacing: [3],                speed:  0.50 },
-  { type: 'river', kind: 'turtle', length: 1, spacing: [0,0,1],            speed: -1.00, diving: true },
+  /* --- The river. Five rows. The top row of logs runs left to right, which
+         is why the leftmost lilypad is the hardest to reach. ------------- */
+  { type: 'river', kind: 'log',    length: 3, spacing: [3], speed:  0.80, gator: true },
+  { type: 'river', kind: 'turtle', length: 3, spacing: [2], speed: -1.00, dive: 'alternate' },
+  { type: 'river', kind: 'log',    length: 6, spacing: [3], speed:  1.40, gator: true },
+  { type: 'river', kind: 'log',    length: 3, spacing: [3], speed:  0.60, lady: true },
+  { type: 'river', kind: 'turtle', length: 2, spacing: [2], speed: -0.90, dive: 'alternate' },
 
-  /* --- The median. Catch your breath. ----------------------------------- */
-  { type: 'safe' },
+  /* --- The median. Safe until level 3, when the snakes turn up. ---------- */
+  { type: 'road',  kind: 'snake',  length: 2, spacing: [9], speed: -0.45,
+    bounce: true, fromLevel: PROGRESSION.snakeFromLevel, background: 'median' },
 
-  /* --- The road. Five lanes of traffic. --------------------------------- */
-  { type: 'road',  kind: 'truck',  length: 2, spacing: [3,8],              speed: -1.00 },
-  { type: 'road',  kind: 'racer',  length: 1, spacing: [14],               speed:  0.75 },
-  { type: 'road',  kind: 'car',    length: 1, spacing: [3,3,7],            speed: -0.75 },
-  { type: 'road',  kind: 'dozer',  length: 1, spacing: [3,3,7],            speed:  0.50 },
-  { type: 'road',  kind: 'taxi',   length: 1, spacing: [4],                speed: -0.50 },
+  /* --- The road. Five rows, trucks nearest the median. ------------------- */
+  { type: 'road',  kind: 'truck',  length: 2, spacing: [3,8],   speed: -0.70 },
+  { type: 'road',  kind: 'racer',  length: 1, spacing: [12],    speed:  1.60 },
+  { type: 'road',  kind: 'car',    length: 1, spacing: [3,3,7], speed: -0.90 },
+  { type: 'road',  kind: 'dozer',  length: 1, spacing: [3,3,7], speed:  0.60 },
+  { type: 'road',  kind: 'taxi',   length: 1, spacing: [4],     speed: -0.80 },
 
-  /* --- The start. --------------------------------------------------------*/
+  /* --- The start. ------------------------------------------------------- */
   { type: 'start' },
 ];
 
 
 /* ==========================================================================
-   3. THEMES  ::  how it all looks
+   4. THEMES  ::  how it all looks
    --------------------------------------------------------------------------
-   This is the fun part. A theme has two halves:
+   A theme has a `palette` (the flat background bands) and `art` (one entry
+   per `kind` used in LANES, plus the frog and friends).
 
-     palette   the flat background colours (water, road, grass...)
-     art       one entry per 'kind' used in LANES above, plus the frog
+   An art entry says HOW to draw something. Five kinds of draw:
 
-   An art entry says HOW to draw something. There are four kinds of draw:
+     { draw: 'pixels', sprite: 'frog' }
+         Pixel art, from js/sprites.js. This is what makes the arcade theme
+         look like the arcade. Open that file and edit the pictures directly:
+         they are grids of letters, one letter per pixel.
 
-     { draw: 'rect',   color: '#c55843' }
-         A plain filled rectangle. Simplest thing there is.
+     { draw: 'emoji', glyph: '🚗' }
+         Any emoji. Change the character, change the game.
 
-     { draw: 'circle', color: '#de0004' }
-         A filled circle per grid square. A length-3 obstacle becomes three
-         circles in a row, which is how the arcade drew turtles.
+     { draw: 'image', src: 'assets/log.png' }
+         Your own artwork. See assets/README.md.
 
-     { draw: 'emoji',  glyph: '🚗' }
-         Any emoji, drawn as text. Change the character, change the game.
-         Paste any emoji you like straight in between the quotes.
+     { draw: 'rect', color: '#c55843' }      a plain rectangle
+     { draw: 'circle', color: '#de0004' }    a circle per square
 
-     { draw: 'image',  src: 'assets/log.png' }
-         Your own artwork. Draw something, save it as a PNG in the assets/
-         folder, and point src at it. See assets/README.md.
+   Options any entry can use:
 
-   Extra options any entry can use:
+     fit: 'center'   one copy, centred            (default, good for cars)
+     fit: 'repeat'   tiled along the length       (good for turtle groups)
+     fit: 'stretch'  one copy squashed to fill    (good for a long log PNG)
 
-     fit: 'center'   draw one copy, centred    (default, good for cars)
-     fit: 'repeat'   tile it across the length (good for logs: 🪵🪵🪵🪵)
-     fit: 'stretch'  squash one copy to fill   (good for a custom log PNG)
+     faces: 'left'   the art points left, so mirror it when it moves right
+     scale: 0.9      shrink or grow it inside its square
+     capLeft/capRight  (pixels only) different sprites for the two ends,
+                       which is how the logs get rounded ends
 
-     faces: 'left'   this art points left, so mirror it when it moves right.
-     faces: 'right'  the opposite. Leave it out if the art is symmetrical.
-
-     scale: 0.9      shrink or grow it inside its square (1 = fill the square)
-
-     frames: 4       for images only: your PNG is a strip of 4 frames laid
-     fps: 8          out left to right, played as an animation at 8 fps.
-
-   To make a whole new theme, copy one of these blocks, give it a new name,
-   and set CONFIG.theme to that name at the top of this file.
+   To make a new theme, copy a block, rename it, and set CONFIG.theme.
    ========================================================================== */
 
 const THEMES = {
 
   /* ------------------------------------------------------------------------
-     RETRO  ::  faithful to the 1981 arcade cabinet. Rectangles and circles.
+     ARCADE  ::  the 1981 cabinet. Pixel art from js/sprites.js.
      ---------------------------------------------------------------------- */
-  retro: {
+  arcade: {
     palette: {
-      water:    '#000047',
-      road:     '#000000',
-      grass:    '#1ac300',
-      median:   '#8500da',
-      bankLine: '#1ac300',
+      water:    '#000098',   /* the cabinet's deep blue river */
+      road:     '#000000',   /* the road was pure black */
+      grass:    '#00a800',
+      median:   '#8000c0',   /* that unmistakable purple median */
+      bankLine: '#00d800',
+      bayInner: '#000048',
       hudBg:    '#000000',
       text:     '#ffffff',
-      textDim:  '#b9bfca',
-      timeBar:  '#0bcb00',
-      timeLow:  '#de0004',
+      textDim:  '#00d8d8',
+      accent:   '#ffd800',
+      timeBar:  '#00d800',
+      timeLow:  '#f83800',
     },
     art: {
-      frog:   { draw: 'circle', color: 'greenyellow' },
-      scored: { draw: 'circle', color: '#0bcb00' },
-      life:   { draw: 'circle', color: 'greenyellow' },
-      home:   { draw: 'rect',   color: '#00701f' },
+      frog:    { draw: 'pixels', sprite: 'frog' },
+      lady:    { draw: 'pixels', sprite: 'lady' },
+      scored:  { draw: 'pixels', sprite: 'frogHome', scale: 0.8 },
+      life:    { draw: 'pixels', sprite: 'frogHome', scale: 1.0 },
+      home:    { draw: 'pixels', sprite: 'lilypad' },
+      fly:     { draw: 'pixels', sprite: 'fly' },
+      bayCroc: { draw: 'pixels', sprite: 'bayCroc' },
+      splat:   { draw: 'pixels', sprite: 'splat' },
 
-      log:    { draw: 'rect',   color: '#c55843' },
-      turtle: { draw: 'circle', color: '#de0004' },
+      log:     { draw: 'pixels', sprite: 'logMid', fit: 'repeat',
+                 capLeft: 'logLeft', capRight: 'logRight' },
+      gator:   { draw: 'pixels', sprite: 'gatorBody', fit: 'repeat',
+                 capLeft: 'gatorTail', capRight: 'gatorHead', faces: 'right' },
+      turtle:  { draw: 'pixels', sprite: 'turtle', fit: 'repeat', faces: 'left' },
+      snake:   { draw: 'pixels', sprite: 'snakeBody', fit: 'repeat',
+                 capLeft: 'snakeHead', capRight: 'snakeTail', faces: 'left' },
 
-      truck:  { draw: 'rect',   color: '#c2c4da' },
-      racer:  { draw: 'rect',   color: '#c2c4da' },
-      car:    { draw: 'rect',   color: '#de3cdd' },
-      dozer:  { draw: 'rect',   color: '#0bcb00' },
-      taxi:   { draw: 'rect',   color: '#e5e401' },
-
-      splat:  { draw: 'circle', color: '#ffffff' },
+      truck:   { draw: 'pixels', sprite: 'truckBack', fit: 'repeat',
+                 capRight: 'truckCab', faces: 'right' },
+      racer:   { draw: 'pixels', sprite: 'racer', faces: 'right' },
+      car:     { draw: 'pixels', sprite: 'car',   faces: 'right' },
+      dozer:   { draw: 'pixels', sprite: 'dozer', faces: 'right' },
+      taxi:    { draw: 'pixels', sprite: 'taxi',  faces: 'right' },
     },
   },
 
   /* ------------------------------------------------------------------------
-     EMOJI  ::  same game, friendlier faces. Swap any glyph below.
+     EMOJI  ::  same game, friendlier faces. Swap any glyph.
      ---------------------------------------------------------------------- */
   emoji: {
     palette: {
@@ -235,28 +272,34 @@ const THEMES = {
       grass:    '#2f9e44',
       median:   '#6741d9',
       bankLine: '#51cf66',
+      bayInner: '#0d2b4a',
       hudBg:    '#12121a',
       text:     '#ffffff',
       textDim:  '#b9bfca',
+      accent:   '#ffd43b',
       timeBar:  '#51cf66',
       timeLow:  '#ff6b6b',
     },
     art: {
-      frog:   { draw: 'emoji', glyph: '🐸', scale: 0.92 },
-      scored: { draw: 'emoji', glyph: '🐸', scale: 0.7  },
-      life:   { draw: 'emoji', glyph: '🐸', scale: 0.7  },
-      home:   { draw: 'emoji', glyph: '🏠', scale: 0.75 },
+      frog:    { draw: 'emoji', glyph: '🐸', scale: 0.92 },
+      lady:    { draw: 'emoji', glyph: '💗', scale: 0.85 },
+      scored:  { draw: 'emoji', glyph: '🐸', scale: 0.7 },
+      life:    { draw: 'emoji', glyph: '🐸', scale: 0.7 },
+      home:    { draw: 'emoji', glyph: '🪷', scale: 0.8 },
+      fly:     { draw: 'emoji', glyph: '🪰', scale: 0.7 },
+      bayCroc: { draw: 'emoji', glyph: '🐊', scale: 0.8 },
+      splat:   { draw: 'emoji', glyph: '💥' },
 
-      log:    { draw: 'emoji', glyph: '🪵', fit: 'repeat' },
-      turtle: { draw: 'emoji', glyph: '🐢', faces: 'left' },
+      log:     { draw: 'emoji', glyph: '🪵', fit: 'repeat' },
+      gator:   { draw: 'emoji', glyph: '🐊', fit: 'repeat', faces: 'left' },
+      turtle:  { draw: 'emoji', glyph: '🐢', fit: 'repeat', faces: 'left' },
+      snake:   { draw: 'emoji', glyph: '🐍', fit: 'repeat', faces: 'left' },
 
-      truck:  { draw: 'emoji', glyph: '🚚', faces: 'left', fit: 'repeat' },
-      racer:  { draw: 'emoji', glyph: '🏎️', faces: 'left' },
-      car:    { draw: 'emoji', glyph: '🚗', faces: 'left' },
-      dozer:  { draw: 'emoji', glyph: '🚜', faces: 'left' },
-      taxi:   { draw: 'emoji', glyph: '🚕', faces: 'left' },
-
-      splat:  { draw: 'emoji', glyph: '💥' },
+      truck:   { draw: 'emoji', glyph: '🚚', fit: 'repeat', faces: 'left' },
+      racer:   { draw: 'emoji', glyph: '🏎️', faces: 'left' },
+      car:     { draw: 'emoji', glyph: '🚗', faces: 'left' },
+      dozer:   { draw: 'emoji', glyph: '🚜', faces: 'left' },
+      taxi:    { draw: 'emoji', glyph: '🚕', faces: 'left' },
     },
   },
 };

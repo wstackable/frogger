@@ -1,6 +1,9 @@
 {
   "tasks": {
     "test": "deno run --allow-read tests/game.test.js",
+    "test:play": "deno run --allow-read tests/playability.test.js",
+    "test:browser": "deno run --allow-read --allow-net --allow-run --allow-write --allow-env tests/browser.test.js",
+    "test:all": "deno task test && deno task test:play && deno task test:browser",
     "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server --port 8000"
   }
 }

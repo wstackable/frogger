@@ -1,36 +1,90 @@
 # Making it yours 🐸
 
-This is a list of things to change, roughly easiest first. Everything here is in
-**`js/config.js`** unless it says otherwise.
+A list of things to change, easiest first.
 
-The loop for all of them is the same:
+Two files matter:
 
-1. Open `js/config.js` in a text editor
+- **`js/config.js`** is the rules, the board and the difficulty
+- **`js/sprites.js`** is all the pixel art
+
+The loop for everything here is the same:
+
+1. Open the file in a text editor
 2. Change something
 3. Save
 4. Refresh the browser tab
 
-If the game goes blank, you have almost certainly deleted a comma or a bracket.
-Press **F12** in the browser, click **Console**, and it will tell you which line.
-That is not a disaster, it is how everyone does this.
+If the game goes blank you have almost certainly deleted a comma or a bracket.
+Press **F12**, click **Console**, and it will tell you which line. That is not a
+disaster, it is how everyone does this.
 
 ---
 
-## Level 1: change one character
+## Level 1: draw your own frog
 
-Find the `emoji` theme near the bottom of `config.js`. Every line in there is a
-picture in the game. Change the emoji between the quote marks.
+Open **`js/sprites.js`**. Every picture in the game is in there, drawn as a grid
+of letters. One letter is one pixel.
 
 ```js
-frog:   { draw: 'emoji', glyph: '🐸', scale: 0.92 },
-car:    { draw: 'emoji', glyph: '🚗', faces: 'left' },
-log:    { draw: 'emoji', glyph: '🪵', fit: 'repeat' },
-turtle: { draw: 'emoji', glyph: '🐢', faces: 'left' },
+frog: [
+  '................',
+  '..gg........gg..',
+  '..gGg......gGg..',
+  '..gGGWW..WWGGg..',      // WW is an eye, K is the pupil
+  '..gGGWK..KWGGg..',
+  '..gGGGGGGGGGGg..',
+  ...
 ```
 
-Some ideas that make a whole new game:
+- `.` means see-through, so the water shows behind it
+- `G` is bright green, `g` mid green, `d` dark green
+- `W` white, `K` black, `R` red, `Y` yellow, `P` pink, `C` cyan
+- the full list is at the top of the file, in `PALETTE`
 
-| Theme | frog | log | turtle | cars become |
+**Give the frog a hat.** Change the top row to `'....YYYYYYYY....'`.
+
+**Make the frog angry.** Move the pupils to the inside corners.
+
+**Every row must be the same length.** If one row is 15 characters and the rest
+are 16, the picture comes out sheared. `deno task test` checks this for you if
+you have Deno, and the browser console warns you if you do not.
+
+## Level 2: recolour everything at once
+
+The colours live in `PALETTE` at the top of `js/sprites.js`. Change one value
+and every sprite using that letter changes with it.
+
+```js
+G: '#00e000',       // make this '#ff00ff' and the frog goes hot pink
+R: '#f83800',       // the turtle shells
+B: '#a86028',       // the logs
+```
+
+The flat background bands are separate, in the theme's `palette` in
+`js/config.js`:
+
+```js
+water:  '#000098',
+road:   '#000000',
+grass:  '#00a800',
+median: '#8000c0',
+```
+
+A sunset road, a purple river, a black-and-white game: all one-line changes.
+
+## Level 3: switch to emoji, or make a new theme
+
+At the top of `js/config.js`:
+
+```js
+theme: 'arcade',    // the 1981 pixel look
+theme: 'emoji',     // 🐸 🪵 🐢 🚗 🚜 🚕
+```
+
+The emoji theme is a whole different set of art in the same file. Change any
+glyph:
+
+| Theme | frog | log | turtle | traffic |
 |---|---|---|---|---|
 | Space | 🚀 | ☄️ | 🛸 | 👽 👾 🌑 |
 | Ocean | 🐠 | 🛶 | 🐋 | 🦈 🐙 🦑 |
@@ -40,84 +94,110 @@ Some ideas that make a whole new game:
 
 On a Mac, **Ctrl + Cmd + Space** opens the emoji picker.
 
-> **Why `faces: 'left'`?** Most vehicle emoji are drawn pointing left. That line
-> tells the game to flip the picture when the thing is driving right, so cars
-> never drive backwards. If your new emoji already points right, change it to
-> `faces: 'right'`. If it points at you (like 🐸), delete the line.
+> **Why `faces: 'left'` on some of them?** Most vehicle emoji point left. That
+> line tells the game to flip the picture when the thing drives right, so cars
+> never drive backwards. Delete the line if your art points at the viewer.
 
-## Level 2: change the colours
+To make a brand new theme, copy either block in `THEMES`, give it a new name,
+and set `theme:` to that name.
 
-Each theme has a `palette`. These are the flat background bands.
+## Level 4: make it easier, or brutal
 
-```js
-palette: {
-  water:  '#123f6d',    // the river
-  road:   '#2b2b33',    // the tarmac
-  grass:  '#2f9e44',    // the bank at the top and the start at the bottom
-  median: '#6741d9',    // the safe strip in the middle
-},
-```
-
-Those `#` codes are colours. Search the web for "color picker", grab a code,
-paste it in. A sunset road, a purple river, a pink median: it all works.
-
-## Level 3: make it easier (or brutal)
-
-At the top of `config.js`:
+Top of `js/config.js`:
 
 ```js
 lives: 5,                  // try 99
-timeLimit: 30,             // seconds per frog. 60 is relaxed, 12 is mean.
-speedRampPerLevel: 0.12,   // 0 = it never gets faster. 0.4 = it gets silly.
-hopDuration: 90,           // 0 makes the frog snap instantly, very arcade
-sound: true,               // false for silence
+timeLimit: 30,             // 60 is relaxed, 12 is mean
+hopDuration: 80,           // 0 makes the frog snap instantly, very arcade
+sound: true,
 ```
 
-And in `difficulty`:
+And the arcade rules. All `true` is faithful. Turning them off is kinder.
 
 ```js
-difficulty: {
-  hitBankIsDeath: false,   // true = landing between two bays kills you (arcade rule)
-  divingTurtles: true,     // false = turtles stay up and can be trusted
-  diveUp: 4.0,             // seconds the turtles stay up
-  diveBlink: 1.5,          // seconds of warning flashing
-  diveDown: 1.5,           // seconds underwater
+rules: {
+  bankIsDeath: true,        // landing on the green bank between two lilypads kills
+  occupiedBayIsDeath: true, // so does jumping into a lilypad you already filled
+  edgeIsDeath: true,        // riding a log off the side of the screen kills
+  divingTurtles: true,      // turtle groups that sink
+  gatorMouthIsDeath: true,  // the front of a crocodile kills
 },
 ```
 
-## Level 4: rewrite the board
+**For a first go with a younger kid**, `bankIsDeath: false` and
+`occupiedBayIsDeath: false` remove the two deaths that feel unfair before you
+know they are coming.
 
-This is the big one. `LANES` is the whole layout, one line per row, top to bottom.
+Turtles too mean? They are timed in seconds:
 
 ```js
-{ type: 'road', kind: 'car', length: 1, spacing: [3,3,7], speed: -0.75 },
+diveUp: 4.5,      // how long they stay dry. make it 8 to be gentle.
+diveTuck: 1.2,    // the warning, while they are still safe to stand on
+diveUnder: 1.6,   // how long they are gone
 ```
 
-- **`type`** what the row does. `'road'` squashes you, `'river'` drowns you
-  unless you are riding something, `'safe'` cannot hurt you, `'home'` is the
-  goal, `'start'` is where you begin.
-- **`kind`** which art to use. It has to match a name in the theme's `art` list.
-- **`length`** how many squares long each obstacle is. `1` is a car, `7` is a
-  very long log.
-- **`spacing`** the gaps between obstacles, in squares, repeating forever.
-  `[3]` means always 3 apart. `[3, 8]` means 3, then 8, then 3, then 8, which
-  makes convoys with a gap you can sneak through. `[0, 0, 1]` makes groups of
-  three touching each other, which is how the turtles work.
+## Level 5: change when the hazards arrive
+
+`PROGRESSION` in `js/config.js` is how the game gets harder.
+
+```js
+speedStep: 0.10,     // +10% speed per level
+easeEvery: 5,        // every 5 levels it backs off a bit before climbing again
+easeAmount: 0.25,    // how much speed it gives back
+
+flyFromLevel:      1,   // the bonus fly, worth 200
+ladyFromLevel:     2,   // the lady frog on a log, worth 200
+bayCrocFromLevel:  2,   // a crocodile lurking in a lilypad
+snakeFromLevel:    3,   // snakes on the median
+gatorFromLevel:    3,   // crocodiles instead of logs
+```
+
+Set any of the `FromLevel` numbers to **1** to have that hazard from the very
+start, or **99** to switch it off completely.
+
+Want a chaotic first level? Set them all to 1. Want a calm game for a five year
+old? Set them all to 99 and `speedStep: 0`.
+
+## Level 6: rewrite the board
+
+`LANES` is the whole layout, one line per row, top to bottom.
+
+```js
+{ type: 'road', kind: 'car', length: 1, spacing: [3,3,7], speed: -0.9 },
+```
+
+- **`type`** what the row does. `'road'` kills you, `'river'` drowns you unless
+  you are standing on something, `'safe'` cannot hurt you, `'home'` is the
+  lilypads, `'start'` is where you begin.
+- **`kind`** which art to use. Must match a name in the theme's `art` list.
+- **`length`** how many squares long each thing is. A turtle group of three is
+  `length: 3`. The long log is `length: 6`.
+- **`spacing`** the gaps between them, in squares, repeating forever. `[3]` is
+  always 3 apart. `[3, 8]` alternates, which makes convoys with a gap you can
+  time your run through.
 - **`speed`** pixels per frame. **Negative goes left, positive goes right.**
-  `0.5` is a crawl, `1.5` is quick, `3` is nearly impossible.
+  0.5 is a crawl, 1.6 is the racing car.
+- **`dive: 'alternate'`** on a turtle row means every other group sinks.
+
+> **One rule worth knowing before you change the river.** Log gaps are wider
+> than a single hop, so you cannot cross them. If every river row flowed the
+> same way, a lilypad behind you would be unreachable and the level could become
+> impossible to finish. The rows **alternate direction** so you can always drop
+> back a row, get carried the other way, and try again. If you change the
+> speeds, keep them alternating, and run `deno task test:play` to check a bot
+> can still get across.
 
 Things to try:
 
-- **Add a sixth traffic lane.** Copy any `road` line, paste it below, change the
-  numbers. The board gets taller on its own.
-- **Make a river-only game.** Delete all the `road` lines.
-- **Two medians.** Add another `{ type: 'safe' }` in the middle of the traffic.
-- **A one-way boulevard.** Make every road speed positive.
-- **A wider board.** Change `cols: 13` at the top. Keep it an odd number so the
-  frog can start dead centre, and update `homeCols` to match.
-- **Seven bays instead of five.** `homeCols: [0, 2, 4, 6, 8, 10, 12]`.
+- **A sixth lane of traffic.** Copy any `road` line and paste it below. The
+  board gets taller on its own.
+- **A river-only game.** Delete all the `road` lines except the median.
+- **Two medians.** Add `{ type: 'safe' }` in the middle of the traffic.
+- **Seven lilypads.** `homeCols: [0, 2, 4, 6, 8, 10, 12]`.
+- **A wider board.** Change `cols: 13`. Keep it odd so the frog starts centred,
+  and update `homeCols` to match.
 
-## Level 5: use your own drawings
+## Level 7: use your own drawings
 
 The best version of this project. Draw a frog on paper, photograph it, cut the
 background out, save it as a PNG in `assets/`, then:
@@ -129,64 +209,26 @@ frog: { draw: 'image', src: 'assets/my-frog.png' },
 Full instructions, including how to make it animate, are in
 [assets/README.md](assets/README.md).
 
-## Level 6: make a whole new theme
-
-Copy either theme block, give it a new name, and switch to it at the top.
-
-```js
-const THEMES = {
-  retro: { ... },
-  emoji: { ... },
-
-  space: {                                  // ← your new one
-    palette: { water: '#0b0b2a', road: '#101018', grass: '#2b2b4a',
-               median: '#3a2a5a', bankLine: '#8888ff', hudBg: '#05050c',
-               text: '#ffffff', textDim: '#9aa0b5',
-               timeBar: '#6cf', timeLow: '#f66' },
-    art: {
-      frog:   { draw: 'emoji', glyph: '🚀' },
-      scored: { draw: 'emoji', glyph: '🛰️', scale: 0.7 },
-      life:   { draw: 'emoji', glyph: '🚀', scale: 0.7 },
-      home:   { draw: 'emoji', glyph: '🪐', scale: 0.75 },
-      log:    { draw: 'emoji', glyph: '☄️', fit: 'repeat' },
-      turtle: { draw: 'emoji', glyph: '🛸', faces: 'left' },
-      truck:  { draw: 'emoji', glyph: '🛰️', faces: 'left', fit: 'repeat' },
-      racer:  { draw: 'emoji', glyph: '💫' },
-      car:    { draw: 'emoji', glyph: '👽' },
-      dozer:  { draw: 'emoji', glyph: '👾' },
-      taxi:   { draw: 'emoji', glyph: '🌑' },
-      splat:  { draw: 'emoji', glyph: '💥' },
-    },
-  },
-};
-```
-
-Then at the top of the file: `theme: 'space',`
-
-A theme needs an `art` entry for every `kind` used in `LANES`, plus `frog`,
-`scored`, `life`, `home` and `splat`. Miss one and the game quietly falls back
-to the retro version of it rather than breaking.
-
-## Level 7: change the rules
+## Level 8: change the rules
 
 Now you are in `js/game.js`. Two functions matter:
 
 - **`checkLane()`** decides what happens to the frog where it is standing. Every
-  rule about dying, riding and scoring is in here. A new lane type, a lane that
-  bounces you sideways, a lane that is safe only on even seconds: all of it goes
-  here.
-- **`update()`** runs once per frame and moves the world.
+  rule about dying, riding, picking up the lady frog and scoring is in there.
+- **`update()`** runs once a frame and moves the world.
 
-Ideas, in rough order of difficulty:
+Ideas, roughly in order of difficulty:
 
-- A `'lily'` lane type: safe, but only every other square
-- A bonus fly that appears in a random bay and is worth 200 points
-- A second frog controlled with WASD, for two players at once
-- Crocodiles in the river: a log you can ride, except the head end
-- Snakes that patrol the median, like the later arcade levels
+- A `'lily'` row: safe, but only every other square
+- A frog that can hop two squares if you hold shift
+- Otters, which the original had and this does not: they swim to a log and tip
+  one end into the water
+- A second frog on WASD, for two players at once
+- Bonus points for crossing without stopping
 
-Run `deno task test` after changing `game.js`. It drives the real game code and
-will tell you if frogs stopped drowning or levels stopped advancing.
+Run `deno task test` and `deno task test:play` after changing `game.js`. The
+first tells you if you broke a rule. The second tells you if you broke the
+*game*, which is a different and more embarrassing thing.
 
 ---
 
@@ -194,12 +236,15 @@ will tell you if frogs stopped drowning or levels stopped advancing.
 
 | What you see | What it usually is |
 |---|---|
-| Blank black page | A missing comma or bracket in `config.js`. Check the browser console (F12). |
+| Blank black page | A missing comma or bracket. Check the console (F12). |
+| A sprite looks sheared or stretched | One row of that sprite is a different length from the others. |
 | Everything is bright pink | A colour name the palette does not have. Check the spelling. |
-| An obstacle is invisible | The `kind` in `LANES` does not match any name in the theme's `art`. |
-| Emoji shows as `?` or a box | Your device does not have that emoji. Pick another. |
-| Your PNG does not appear | Wrong filename or folder. The console will say which file it could not load. Capital letters matter. |
-| The frog dies instantly | You probably put a `'road'` or `'river'` type on the bottom row. The last row should be `'start'`. |
+| A sprite is invisible | The `kind` in `LANES` does not match any name in the theme's `art`, or a letter in the pixel grid is not in `PALETTE`. |
+| Emoji shows as a box | Your device does not have that emoji. Pick another. |
+| Your PNG does not appear | Wrong filename or folder. The console says which file it could not load. Capital letters matter. |
+| The frog dies instantly | You probably gave the bottom row a `'road'` or `'river'` type. The last row should be `'start'`. |
+| The river becomes impossible | Two river rows next to each other flowing the same way. See the note in Level 6. |
 
-Nothing you can type in `config.js` can break anything permanently. Worst case,
-`git checkout js/config.js` puts it back, or download the file again from GitHub.
+Nothing you can type in `config.js` or `sprites.js` can break anything
+permanently. Worst case, `git checkout js/config.js` puts it back, or download
+the file again from GitHub.

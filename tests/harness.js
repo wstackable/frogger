@@ -13,7 +13,7 @@ import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 const ROOT = join(dirname(fromFileUrl(import.meta.url)), "..");
 
 export async function load() {
-  const files = ["js/config.js", "js/render.js", "js/audio.js", "js/game.js"];
+  const files = ["js/config.js", "js/sprites.js", "js/render.js", "js/audio.js", "js/game.js"];
   let src = "";
   for (const f of files) src += await Deno.readTextFile(`${ROOT}/${f}`) + "\n";
 
@@ -33,11 +33,14 @@ export async function load() {
     (listeners[type] ||= []).push({ obj, fn });
   };
 
-  const canvas = {
-    _tag: "canvas", width: 0, height: 0, style: {},
-    getContext: () => ctx,
-    addEventListener: addEL("canvas"),
-  };
+  function makeCanvas() {
+    return {
+      _tag: "canvas", width: 0, height: 0, style: {},
+      getContext: () => ctx,
+      addEventListener: addEL("canvas"),
+    };
+  }
+  const canvas = makeCanvas();
   const pad = { hidden: true, addEventListener: addEL("pad") };
 
   const rafQueue = [];
@@ -69,7 +72,10 @@ export async function load() {
 
   const api = fn(
     win,
-    { getElementById: (id) => (id === "game" ? canvas : pad) },
+    {
+      getElementById: (id) => (id === "game" ? canvas : pad),
+      createElement: (tag) => (tag === "canvas" ? makeCanvas() : {}),
+    },
     win.requestAnimationFrame,
     win.localStorage,
     win.Image,

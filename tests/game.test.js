@@ -7,7 +7,7 @@ function check(name, cond, extra = "") {
 }
 
 const { api, tick, frames, key } = await load();
-const { game, lanes, CONFIG } = api;
+const { game, lanes, CONFIG, PROGRESSION, WIDTH } = api;
 const GRID = CONFIG.grid;
 
 // Lanes are built once at load, so tests that shove obstacles around must put
@@ -49,7 +49,7 @@ check("forward hop scored 10", game.score === s0 + CONFIG.score.forwardHop, game
 console.log("\n== road kills ==");
 // Reset, then force a collision: put a car exactly on the frog.
 reset();
-const roadLane = lanes.find(l => l.type === "road");
+const roadLane = lanes.find(l => l.type === "road" && l.kind !== "snake");
 game.frog.row = roadLane.row;
 roadLane.obstacles[0].x = game.frog.x;
 frames(1);
@@ -163,20 +163,25 @@ for (const lane of lanes) {
 }
 
 console.log("\n== diving turtles ==");
-const diver = lanes.find(l => l.diving);
+const diver = lanes.find(l => l.dive);
 check("a diving lane exists", !!diver);
 if (diver) {
   api.startGame();
   frames(1);
   game.frog.row = diver.row;
   game.timeLeft = 1e9;
-  diver.obstacles.forEach(o => { o.x = game.frog.x - GRID / 2; });  // always underneath
+  const sinker = diver.obstacles.find(o => o.dives);
+  check("the diving lane has a group that dives", !!sinker);
+  const floater = diver.obstacles.find(o => !o.dives);
+  check("the diving lane also has a group that never dives", !!floater);
+  diver.obstacles.forEach(o => { o.x = -9999; });
+  sinker.x = game.frog.x - GRID / 2;                                 // only the sinker is under us
   let died = false;
-  const cycle = CONFIG.difficulty.diveUp + CONFIG.difficulty.diveBlink + CONFIG.difficulty.diveDown;
+  const cycle = CONFIG.timing.diveUp + CONFIG.timing.diveTuck + CONFIG.timing.diveUnder;
   for (let i = 0; i < cycle * 70; i++) {
     frames(1);
     if (game.state === "dying") { died = true; break; }
-    diver.obstacles.forEach(o => { o.x = game.frog.x - GRID / 2; });
+    sinker.x = game.frog.x - GRID / 2;
   }
   check("turtles eventually dive and drown the frog", died, game.state);
   check("dive death reason", game.deathReason === "The turtles dived", game.deathReason);
@@ -191,6 +196,203 @@ frames(2);
 check("retro theme renders", true);
 CONFIG.theme = "emoji";
 frames(2);
+
+
+/* ==========================================================================
+   The arcade rules
+   ========================================================================== */
+
+const homeRow = lanes.findIndex(l => l.type === "home");
+
+console.log("\n== the lilypads ==");
+reset();
+game.frog.row = homeRow;
+game.frog.x = 1 * GRID;                       // col 1 is bank, not a bay
+frames(1);
+check("landing on the bank between bays kills you", game.state === "dying", game.state);
+check("bank death reason", game.deathReason === "Hit the bank", game.deathReason);
+
+reset();
+game.bays[0] = true;
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[0] * GRID;
+frames(1);
+check("jumping into an occupied lilypad kills you", game.state === "dying", game.state);
+
+console.log("\n== the time bonus ==");
+reset();
+game.timeLeft = 10.05;                         // just over 20 half-seconds
+let scoreBefore2 = game.score;
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[1] * GRID;
+frames(1);
+const gained = game.score - scoreBefore2;
+const expected = CONFIG.score.reachHome + 20 * CONFIG.score.perHalfSecondLeft;
+check("home scores 50 plus 10 per half second left", gained === expected,
+  `got ${gained}, expected ${expected}`);
+
+console.log("\n== the bonus fly ==");
+reset();
+game.bayHazard = { bay: 2, kind: "fly", bornAt: game.time };
+game.timeLeft = 0.4;                           // no time bonus to muddy the sums
+scoreBefore2 = game.score;
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[2] * GRID;
+frames(1);
+check("eating a fly is worth 200",
+  game.score - scoreBefore2 === CONFIG.score.reachHome + CONFIG.score.fly,
+  `got ${game.score - scoreBefore2}`);
+check("the fly is consumed", game.bayHazard === null);
+
+console.log("\n== the crocodile in the lilypad ==");
+reset();
+game.bayHazard = { bay: 3, kind: "croc", bornAt: game.time };
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[3] * GRID;
+frames(1);
+check("a lilypad croc is harmless while still surfacing", game.state === "play",
+  game.state + " " + game.deathReason);
+
+reset();
+game.bayHazard = { bay: 3, kind: "croc", bornAt: game.time - 5 };
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[3] * GRID;
+frames(1);
+check("a risen lilypad croc kills you", game.state === "dying", game.state);
+check("croc death reason", game.deathReason === "A crocodile was waiting", game.deathReason);
+
+console.log("\n== crocodiles in the river ==");
+resetLanes();
+api.startGame();
+game.level = PROGRESSION.gatorFromLevel;
+api.startLevel();
+frames(1);
+const gatorLane = lanes.find(l => l.hasGators);
+const gator = gatorLane.obstacles.find(o => o.variant === "gator");
+check("crocodiles replace some logs at the right level", !!gator);
+
+if (gator) {
+  const headCell = gator.vx > 0 ? gator.cells - 1 : 0;
+  const bodyCell = gator.vx > 0 ? 0 : gator.cells - 1;
+
+  game.frog.row = gatorLane.row;
+  gatorLane.obstacles.forEach(o => { if (o !== gator) o.x = -9999; });
+  gator.x = game.frog.x - bodyCell * GRID - GRID / 2;
+  frames(1);
+  check("riding a crocodile's back is safe", game.state === "play",
+    game.state + " " + game.deathReason);
+
+  gator.x = game.frog.x - headCell * GRID - GRID / 2;
+  frames(1);
+  check("the crocodile's jaws kill you", game.state === "dying", game.state);
+  check("croc river death reason", game.deathReason === "Eaten by a crocodile",
+    game.deathReason);
+}
+
+console.log("\n== snakes on the median ==");
+const medianLane = lanes.find(l => l.kind === "snake");
+check("there is a snake lane", !!medianLane);
+
+resetLanes();
+api.startGame();                                 // level 1
+frames(1);
+game.frog.row = medianLane.row;
+medianLane.obstacles.forEach(o => { o.x = game.frog.x; });
+frames(2);
+check("the median is safe before the snakes arrive", game.state === "play",
+  game.state + " " + game.deathReason);
+
+resetLanes();
+api.startGame();
+game.level = PROGRESSION.snakeFromLevel;
+api.startLevel();
+frames(1);
+game.frog.row = medianLane.row;
+medianLane.obstacles.forEach(o => { o.x = game.frog.x; });
+frames(2);
+check("snakes on the median kill you from level 3", game.state === "dying", game.state);
+check("snake death reason", game.deathReason === "Bitten by a snake", game.deathReason);
+
+console.log("\n== snakes turn round instead of wrapping ==");
+resetLanes();
+api.startGame();
+game.level = PROGRESSION.snakeFromLevel;
+api.startLevel();
+frames(1);
+game.frog.row = 12;
+game.timeLeft = 1e9;
+let reversed = false;
+let prevSign = Math.sign(medianLane.obstacles[0].vx);
+for (let i = 0; i < 4000; i++) {
+  frames(1);
+  const s = Math.sign(medianLane.obstacles[0].vx);
+  if (s !== prevSign) { reversed = true; break; }
+  prevSign = s;
+}
+check("a snake reverses at the screen edge", reversed);
+check("snakes stay on screen",
+  medianLane.obstacles.every(o => o.x >= -1 && o.x + o.cells * GRID <= WIDTH + 1));
+
+console.log("\n== the lady frog ==");
+resetLanes();
+api.startGame();
+game.level = PROGRESSION.ladyFromLevel;
+api.startLevel();
+frames(1);
+game.frog.row = 12;
+game.timeLeft = 1e9;
+for (let i = 0; i < 1200 && !game.lady; i++) frames(1);
+check("the lady frog turns up", !!game.lady);
+
+if (game.lady) {
+  const ladyLane = game.lady.lane;
+  const lx = game.lady.ob.x + game.lady.cell * GRID;
+  game.frog.row = ladyLane.row;
+  game.frog.x = lx;
+  frames(1);
+  check("hopping onto the lady frog picks her up", game.carrying === true);
+  check("she is no longer on the log", game.lady === null);
+
+  game.timeLeft = 0.4;
+  scoreBefore2 = game.score;
+  game.frog.row = homeRow;
+  game.frog.x = CONFIG.homeCols[4] * GRID;
+  frames(1);
+  check("escorting her home is worth 200",
+    game.score - scoreBefore2 === CONFIG.score.reachHome + CONFIG.score.ladyFrog,
+    `got ${game.score - scoreBefore2}`);
+  check("we are no longer carrying her", game.carrying === false);
+}
+
+console.log("\n== extra lives ==");
+reset();
+game.lives = 3;
+game.score = 0;
+game.nextExtraLife = CONFIG.score.extraLifeEvery;
+game.timeLeft = 0.4;
+game.frog.row = homeRow;
+game.frog.x = CONFIG.homeCols[0] * GRID;
+game.score = CONFIG.score.extraLifeEvery - CONFIG.score.reachHome;
+frames(1);
+check("crossing the extra life threshold awards a frog", game.lives === 4, game.lives);
+
+console.log("\n== the pixel art is well formed ==");
+const { SPRITES, PALETTE } = api;
+let ragged = [], unknown = new Set();
+for (const [name, rows] of Object.entries(SPRITES)) {
+  const w = rows[0].length;
+  if (!rows.every(r => r.length === w)) ragged.push(name);
+  for (const row of rows) for (const ch of row) if (!(ch in PALETTE)) unknown.add(`${name}:${ch}`);
+}
+check("every sprite is rectangular", ragged.length === 0, ragged.join(", "));
+check("every sprite only uses letters from the palette", unknown.size === 0,
+  [...unknown].join(", "));
+check("there are sprites for everything the arcade theme names",
+  Object.values(api.THEMES.arcade.art)
+    .filter(a => a.draw === "pixels")
+    .every(a => SPRITES[a.sprite] &&
+                (!a.capLeft || SPRITES[a.capLeft]) &&
+                (!a.capRight || SPRITES[a.capRight])));
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);
