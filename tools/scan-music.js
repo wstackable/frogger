@@ -12,15 +12,16 @@
    It only rewrites the block between the two MUSIC-FILES markers, so the
    written-out chiptune tunes below it are left alone.
 
+   Only the top level of music/ is scanned. Subfolders are ignored on purpose,
+   so you can park a whole pack in music/unused/ and pick tracks out of it by
+   moving them up a level.
+
    A note on formats. Every browser plays .m4a and .mp3. Safari and iOS do NOT
    play .ogg, so an ogg-only track means silence on an iPad. If you drop in
    .ogg files, convert them first:
 
        ffmpeg -i "track.ogg" -c:a aac -b:a 128k "track.m4a"
    ========================================================================== */
-
-import { walk } from "jsr:@std/fs@1/walk";
-import { relative } from "jsr:@std/path@1";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const MUSIC_DIR = ROOT + "music";
@@ -38,15 +39,18 @@ function displayName(fileName) {
 }
 
 const found = [];
+let skippedDirs = 0;
 try {
-  for await (const entry of walk(MUSIC_DIR, { includeDirs: false })) {
+  for await (const entry of Deno.readDir(MUSIC_DIR)) {
+    if (entry.isDirectory) { skippedDirs++; continue; }
+    if (!entry.isFile) continue;
     const ext = entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase();
     if (!PLAYABLE.has(ext)) continue;
     found.push({
-      path: "music/" + relative(MUSIC_DIR, entry.path).split("\\").join("/"),
+      path: "music/" + entry.name,
       name: displayName(entry.name),
       ext,
-      size: (await Deno.stat(entry.path)).size,
+      size: (await Deno.stat(MUSIC_DIR + "/" + entry.name)).size,
     });
   }
 } catch (e) {
@@ -84,6 +88,11 @@ await Deno.writeTextFile(TARGET, src);
 
 const total = found.reduce((n, f) => n + f.size, 0) / 1048576;
 console.log(`Wrote ${found.length} tracks to js/music.js (${total.toFixed(1)} MB total).`);
+found.forEach((f) => console.log(`  ${f.name}`));
+if (skippedDirs) {
+  console.log(`\nIgnored ${skippedDirs} subfolder(s) in music/. Only the top ` +
+              `level is scanned, so move a file up a level to use it.`);
+}
 
 const shy = found.filter((f) => SAFARI_SHY.has(f.ext));
 if (shy.length) {

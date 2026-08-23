@@ -4,10 +4,8 @@
    THE MUSIC. Two kinds of track share one radio:
 
      FILE tracks    whatever is in the music/ folder. They stream when you
-                    pick them, so nothing is downloaded up front. The pack
-                    that ships with this is "Three Red Hearts" by Abstraction
-                    (abstractionmusic.com), released CC-0 through Tallbeard
-                    Studios, plus one track from Phoenix 89.
+                    pick them, so nothing is downloaded up front. Add more by
+                    dropping files in music/ and running `deno task music`.
      WRITTEN tracks chiptune generated live in the browser from the notes
                     typed out below. No file, no download, and you can edit
                     the tune itself.
@@ -58,28 +56,11 @@ const TRACKS = [
      --------------------------------------------------------------------- */
 
   /* MUSIC-FILES:START -- rebuilt by `deno task music`, do not hand-edit */
-  { name: 'Box Jump',                  file: 'music/Chiptune Music Loops/Three Red Hearts - Box Jump.m4a' },
-  { name: 'Candy',                     file: 'music/Chiptune Music Loops/Three Red Hearts - Candy.m4a' },
-  { name: 'Connected',                 file: 'music/Chiptune Music Loops/Three Red Hearts - Connected.m4a' },
-  { name: 'Deep Blue',                 file: 'music/Chiptune Music Loops/Three Red Hearts - Deep Blue.m4a' },
-  { name: 'Go',                        file: 'music/Chiptune Music Loops/Three Red Hearts - Go.m4a' },
-  { name: 'Go (No Vocal)',             file: 'music/Chiptune Music Loops/Three Red Hearts - Go (No Vocal).m4a' },
-  { name: 'Modern Bits',               file: 'music/Chiptune Music Loops/Three Red Hearts - Modern Bits.m4a' },
-  { name: 'Mountain Climbing',         file: 'music/Mountain Climbing.mp3' },
-  { name: 'Out of Time',               file: 'music/Chiptune Music Loops/Three Red Hearts - Out of Time.m4a' },
-  { name: 'Penguin Town',              file: 'music/Chiptune Music Loops/Three Red Hearts - Penguin Town.m4a' },
-  { name: 'Penguins vs Rabbits',       file: 'music/Chiptune Music Loops/Three Red Hearts - Penguins vs Rabbits.m4a' },
-  { name: 'Penultimate',               file: 'music/Chiptune Music Loops/Three Red Hearts - Penultimate.m4a' },
-  { name: 'Pixel War 1',               file: 'music/Chiptune Music Loops/Three Red Hearts - Pixel War 1.m4a' },
-  { name: 'Pixel War 2',               file: 'music/Chiptune Music Loops/Three Red Hearts - Pixel War 2.m4a' },
-  { name: 'Princess Quest',            file: 'music/Chiptune Music Loops/Three Red Hearts - Princess Quest.m4a' },
-  { name: 'Princess Quest (No Boing)', file: 'music/Chiptune Music Loops/Three Red Hearts - Princess Quest (No Boing).m4a' },
-  { name: 'Puzzle Pieces',             file: 'music/Chiptune Music Loops/Three Red Hearts - Puzzle Pieces.m4a' },
-  { name: 'Rabbit Town',               file: 'music/Chiptune Music Loops/Three Red Hearts - Rabbit Town.m4a' },
-  { name: 'Rumble at the Gates',       file: 'music/Chiptune Music Loops/Three Red Hearts - Rumble at the Gates.m4a' },
-  { name: 'Sanctuary',                 file: 'music/Chiptune Music Loops/Three Red Hearts - Sanctuary.m4a' },
-  { name: 'Save the City',             file: 'music/Chiptune Music Loops/Three Red Hearts - Save the City.m4a' },
-  { name: 'Three Red Hearts',          file: 'music/Chiptune Music Loops/Three Red Hearts - Three Red Hearts.m4a' },
+  { name: 'Alex Morgan Chiptune Music',          file: 'music/Alex Morgan Chiptune Music.mp3' },
+  { name: 'Box Jump',                            file: 'music/Three Red Hearts - Box Jump.m4a' },
+  { name: 'Chiptune Music No Copyright',         file: 'music/Chiptune Music No Copyright.mp3' },
+  { name: 'Echoes of Lumen Chiptune Soundtrack', file: 'music/Echoes of Lumen Chiptune Soundtrack.mp3' },
+  { name: 'Mountain Climbing',                   file: 'music/Mountain Climbing.mp3' },
   /* MUSIC-FILES:END */
 
   /* ---------------------------------------------------------------------
@@ -190,6 +171,8 @@ const Music = {
   _nextTime: 0,
   _compiled: null,
   _audio: null,          /* the <audio> element, for file tracks */
+  _returnTo: null,       /* where to go back to after the bonus round */
+  _forced: null,
 
   /* --- setup ---------------------------------------------------------- */
 
@@ -296,6 +279,37 @@ const Music = {
       this.start();
     }
     return this.trackName();
+  },
+
+  /* Jump to a track by name and remember where we were, so the bonus round
+     can borrow the radio and hand it back. Deliberately does not save to
+     localStorage: this is a detour, not the player's choice. */
+  playNamed(name) {
+    const i = TRACKS.findIndex((t) => t.name === name);
+    if (i < 0) {
+      console.warn(`[frogger] No track called "${name}".`);
+      return false;
+    }
+    if (this._returnTo === null) this._returnTo = this.index;
+    this._forced = i;
+    this.index = i;
+    if (this.enabled && CONFIG.music) { this.stop(); this.start(); }
+    return true;
+  },
+
+  restorePrevious() {
+    if (this._returnTo === null) return;
+    const back = this._returnTo;
+    const forced = this._forced;
+    this._returnTo = null;
+    this._forced = null;
+
+    /* If the player hit R during the rampage, that was a real choice. Leave
+       it alone rather than yanking them back. */
+    if (forced !== null && this.index !== forced) return;
+
+    this.index = back;
+    if (this.enabled && CONFIG.music) { this.stop(); this.start(); }
   },
 
   /* M: mute or unmute. */

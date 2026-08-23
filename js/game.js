@@ -329,9 +329,23 @@ function respawn() {
   game.carrying = false;
 }
 
+/* The engine idles through the countdown and cuts when the rampage ends. */
+const engineState = (st) => st === 'bonusIntro' || st === 'bonus';
+const bonusState = (st) => engineState(st) || st === 'bonusResults';
+
 function setState(next) {
+  const wasEngine = engineState(game.state);
+  const wasBonus = bonusState(game.state);
+
   game.state = next;
   game.stateTime = 0;
+
+  if (!wasEngine && engineState(next)) Engine.start();
+  if (wasEngine && !engineState(next)) Engine.stop();
+
+  /* The rampage borrows the radio and gives it back afterwards. */
+  if (!wasBonus && bonusState(next)) Music.playNamed(BONUS.music);
+  if (wasBonus && !bonusState(next)) Music.restorePrevious();
 }
 
 function addScore(points, label) {
@@ -945,6 +959,7 @@ function smash(lane, ob) {
   bonus.flash = Math.min(0.55, 0.22 + bonus.combo * 0.04);
 
   Sound.play(bonus.combo >= 5 ? 'bigsmash' : 'smash');
+  Engine.rev(0.14 + bonus.combo * 0.02);   /* the engine bites as it hits */
 }
 
 /* Grab a representative colour out of a sprite, for the debris. */
@@ -1099,7 +1114,9 @@ window.addEventListener('keydown', startAudioOnce);
 window.addEventListener('pointerdown', startAudioOnce);
 window.addEventListener('touchstart', startAudioOnce, { passive: true });
 
-window.addEventListener('blur', () => { if (game.state === 'play') game.paused = true; });
+window.addEventListener('blur', () => {
+  if (game.state === 'play' || game.state === 'bonus') game.paused = true;
+});
 
 /* --- Swipe --------------------------------------------------------------- */
 let touchStart = null;
@@ -1946,6 +1963,15 @@ function loop(now) {
   else game.time += dt;
 
   Music.pump();
+
+  /* Revs follow the pedal. Off the pedal it drops back to a lumpy idle. */
+  if (Engine.running) {
+    const canDrive = game.state === 'bonus' && !game.paused;
+    const pedal = canDrive &&
+      (held.left || held.right || held.up || held.down) ? 1 : 0;
+    Engine.setThrottle(pedal);
+  }
+
   draw();
 }
 
@@ -1957,7 +1983,7 @@ requestAnimationFrame(loop);
 window.frogger = {
   game, lanes, CONFIG, PROGRESSION, SPRITES, PALETTE, THEMES, PALETTES,
   Music, Art, notify, TRACKS, DEATH_HINTS, overlayFor, noteFreq,
-  MODES, BONUS, bonus, mode, setting, rule, cycleMode, isBonusLevel,
+  MODES, BONUS, bonus, mode, setting, rule, cycleMode, isBonusLevel, Engine, ENGINE,
   advanceLevel, startBonusRound, inBonus, held, smashableLanes,
   startGame, startLevel, hop, laneY, diveState, speedMultiplier,
   WIDTH, HEIGHT, GRID, COLS, NLANES,

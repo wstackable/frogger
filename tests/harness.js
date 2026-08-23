@@ -71,9 +71,10 @@ export async function load() {
   function param(initial) {
     return {
       value: initial,
-      setValueAtTime() { return this; },
-      linearRampToValueAtTime() { return this; },
-      exponentialRampToValueAtTime() { return this; },
+      setValueAtTime(v) { this.value = v; return this; },
+      linearRampToValueAtTime(v) { this.value = v; return this; },
+      exponentialRampToValueAtTime(v) { this.value = v; return this; },
+      cancelScheduledValues() { return this; },
     };
   }
   const node = () => ({ connect(dest) { return dest; }, disconnect() {} });
@@ -110,7 +111,9 @@ export async function load() {
       };
       return src;
     }
-    createBiquadFilter() { return { ...node(), type: "highpass", frequency: param(1000) }; }
+    createBiquadFilter() {
+      return { ...node(), type: "highpass", frequency: param(1000), Q: param(1) };
+    }
   }
 
 

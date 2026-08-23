@@ -6,7 +6,7 @@ function check(name, cond, extra = "") {
   else { fail++; console.log(`  FAIL ${name} ${extra}`); }
 }
 
-const { api, tick, frames, key, audio } = await load();
+const { api, tick, frames, key, audio, store } = await load();
 const { game, lanes, CONFIG, PROGRESSION, WIDTH } = api;
 const GRID = CONFIG.grid;
 
@@ -802,6 +802,173 @@ for (const kind of ["monsterTruck", "boat"]) {
     }
   }
 }
+
+
+/* ==========================================================================
+   The monster truck engine, and the radio handover
+   ========================================================================== */
+
+console.log("\n== the engine runs only during the rampage ==");
+const Eng = api.Engine;
+CONFIG.sound = true;
+relax();
+reset();
+
+check("the engine is silent during normal play", Eng.running === false);
+
+game.level = B.firstLevel - 1;
+api.advanceLevel();
+check("it fires up for the countdown", Eng.running === true, game.state);
+check("it built its nodes", !!Eng._nodes);
+
+frames(Math.ceil(B.introTime * 60) + 5);
+check("it keeps running through the rampage",
+  Eng.running === true && game.state === "bonus", game.state);
+
+/* Read the four things throttle is supposed to move. Driven directly rather
+   than through held keys, because the truck is 1.4 squares tall and always
+   overlaps a traffic row, so it smashes things (and blips the revs) whether
+   you touch the controls or not. */
+function engineReading(throttle) {
+  Eng._revUntil = 0;
+  Eng.setThrottle(throttle);
+  const n = Eng._nodes;
+  return {
+    hz: n.osc.frequency.value,
+    sub: n.sub.frequency.value,
+    cut: n.cut.frequency.value,
+    chug: n.lfo.frequency.value,
+    vol: n.amp.gain.value,
+    hiss: n.hissAmp.gain.value,
+  };
+}
+
+const idle = engineReading(0);
+const flat = engineReading(1);
+
+check("opening the throttle raises the pitch", flat.hz > idle.hz,
+  `${idle.hz} -> ${flat.hz}`);
+check("idle and flat out match the settings",
+  Math.abs(idle.hz - api.ENGINE.idleHz) < 0.5 &&
+  Math.abs(flat.hz - api.ENGINE.fullHz) < 0.5, `${idle.hz} / ${flat.hz}`);
+check("the sub-octave tracks an octave below", Math.abs(flat.sub - flat.hz / 2) < 0.5,
+  `${flat.sub} vs ${flat.hz / 2}`);
+check("the filter opens up under throttle", flat.cut > idle.cut,
+  `${idle.cut} -> ${flat.cut}`);
+check("the chug speeds up with the revs", flat.chug > idle.chug,
+  `${idle.chug} -> ${flat.chug}`);
+check("it gets louder under throttle", flat.vol > idle.vol,
+  `${idle.vol} -> ${flat.vol}`);
+check("the exhaust is silent at idle and audible flat out",
+  idle.hiss < 0.001 && flat.hiss > 0.01, `${idle.hiss} -> ${flat.hiss}`);
+
+check("a rev blip pushes past flat out", (() => {
+  Eng.setThrottle(0);
+  Eng.rev(0.3);
+  Eng.setThrottle(0);
+  const blipped = Eng._nodes.osc.frequency.value;
+  Eng._revUntil = 0;
+  return blipped > flat.hz;
+})(), "rev should overshoot");
+
+check("holding a direction revs it up in play", (() => {
+  Eng._revUntil = 0;
+  api.held.up = false;
+  frames(8);
+  const off = Eng._nodes.osc.frequency.value;
+  api.held.up = true;
+  frames(8);
+  const on = Eng._nodes.osc.frequency.value;
+  api.held.up = false;
+  return on >= off;
+})());
+
+check("smashing something blips the throttle", (() => {
+  Eng._revUntil = 0;
+  const before = api.bonus.smashed;
+  api.bonus.y = api.laneY(api.smashableLanes()[0].row);
+  for (let i = 0; i < 180 && Eng._revUntil === 0; i++) frames(1);
+  return Eng._revUntil > 0 && api.bonus.smashed > before;
+})());
+
+/* Run it out and make sure the engine shuts off. */
+for (let i = 0; i < 60 * 30 && game.state === "bonus"; i++) frames(1);
+check("it cuts when the rampage ends",
+  Eng.running === false && game.state === "bonusResults", game.state);
+check("and lets go of its nodes, so nothing leaks", Eng._nodes === null);
+
+console.log("\n== the engine does not stack up over rounds ==");
+for (let round = 0; round < 3; round++) {
+  reset();
+  game.level = B.firstLevel - 1;
+  api.advanceLevel();
+  frames(4);
+  Eng.start();              /* a second start must be a no-op */
+  Eng.start();
+  api.setting("lives", 5);
+  for (let i = 0; i < 60 * 40 && game.state !== "play"; i++) frames(1);
+}
+check("after three rounds it is off with no nodes held",
+  Eng.running === false && Eng._nodes === null);
+
+check("the engine stays quiet if sound is switched off", (() => {
+  CONFIG.sound = false;
+  Eng.stop();
+  reset();
+  game.level = B.firstLevel - 1;
+  api.advanceLevel();
+  const quiet = Eng.running === false;
+  CONFIG.sound = true;
+  for (let i = 0; i < 60 * 40 && game.state !== "play"; i++) frames(1);
+  return quiet;
+})());
+
+console.log("\n== the rampage borrows the radio ==");
+const bonusTrackName = api.BONUS.music;
+check("the bonus track exists in the radio",
+  api.TRACKS.some(t => t.name === bonusTrackName), bonusTrackName);
+
+Music.enabled = true;
+CONFIG.music = true;
+reset();
+
+/* Start on some other track. */
+const other = api.TRACKS.findIndex(t => t.name !== bonusTrackName);
+Music.index = other;
+const startedOn = Music.trackName();
+
+game.level = B.firstLevel - 1;
+api.advanceLevel();
+check("the rampage switches to the bonus track",
+  Music.trackName() === bonusTrackName, Music.trackName());
+
+for (let i = 0; i < 60 * 40 && game.state !== "play"; i++) frames(1);
+check("and hands the radio back afterwards",
+  Music.trackName() === startedOn, `${Music.trackName()} vs ${startedOn}`);
+
+check("but respects R pressed during the rampage", (() => {
+  reset();
+  Music.index = other;
+  game.level = B.firstLevel - 1;
+  api.advanceLevel();
+  Music.next();                          /* the player picks something */
+  const chosen = Music.trackName();
+  for (let i = 0; i < 60 * 40 && game.state !== "play"; i++) frames(1);
+  return Music.trackName() === chosen;
+})());
+
+check("borrowing the radio does not overwrite the saved track", (() => {
+  const saved = store.get("frogger.track");
+  reset();
+  game.level = B.firstLevel - 1;
+  api.advanceLevel();
+  const during = store.get("frogger.track");
+  for (let i = 0; i < 60 * 40 && game.state !== "play"; i++) frames(1);
+  return during === saved;
+})());
+
+Music.stop();
+CONFIG.music = false;
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

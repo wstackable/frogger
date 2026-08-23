@@ -49,8 +49,10 @@ difference is how you get lives back.
 after. The frog gets into a monster truck, the rules stop applying, and the
 river fills with boats. Nothing can hurt you: drive around flattening traffic
 and ramming boats against the clock. Keep hitting things and a multiplier
-climbs, the screen shakes harder, and debris goes everywhere. Then a tally, and
-a rank you probably did not earn.
+climbs, the screen shakes harder, and debris goes everywhere. The engine is
+synthesised live, so it idles lumpily when you are coasting, revs as you drive
+and bites every time you connect with something. Then a tally, and a rank you
+probably did not earn.
 
 **Arcade scoring.** 10 a hop, 50 a frog home, 10 per remaining half-second,
 200 for a fly, 200 for the lady frog, 1000 for clearing a level, a free frog
@@ -72,10 +74,11 @@ the splat is enough to teach the rule that catches everybody: on the river you
 have to be standing on something.
 
 **A radio and a colour switcher**, same controls as Phoenix 89. **R** changes
-track, **M** mutes, **C** cycles the colour palette. Twenty-seven tracks: the
-*Three Red Hearts* chiptune loops, one from Phoenix 89, and five tunes written
-out as notes in the source and generated in the browser. Two of those,
-*Yankee Doodle* and *Camptown Races*, are tunes the actual cabinet played.
+track, **M** mutes, **C** cycles the colour palette. It plays whatever is in
+`music/`, plus five tunes written out as notes in the source and generated in
+the browser. Two of those, *Yankee Doodle* and *Camptown Races*, are tunes the
+actual cabinet played. The bonus round borrows the radio for its own track and
+hands it back afterwards.
 
 Plus lives, a 30 second timer, a high score that sticks, pause, keyboard,
 swipe, on-screen buttons on phones, and sound effects with no audio files.
@@ -251,11 +254,11 @@ Frogger is a trademark of Konami. This is a hobby reimplementation for
 learning, not affiliated with or endorsed by them, and none of the artwork is
 theirs.
 
-**Music.** The chiptune loops are *Three Red Hearts* by
+**Music.** *Box Jump* is from the *Three Red Hearts* pack by
 [Abstraction](https://abstractionmusic.com), released CC-0 through
-[Tallbeard Studios](https://tallbeard.itch.io/three-red-hearts-prepare-to-dev).
-No attribution is required, but it is a lovely pack and deserves the credit.
-One track carries over from Phoenix 89. The written-out tunes are in
-`js/music.js`.
+[Tallbeard Studios](https://tallbeard.itch.io/three-red-hearts-prepare-to-dev):
+no attribution required, but it deserves the credit. *Mountain Climbing*
+carries over from Phoenix 89. The remaining tracks in `music/` were added by
+the repository owner. The written-out tunes are in `js/music.js` and are ours.
 
 The code is licensed under [CC0 1.0](LICENSE). Do whatever you like with it.

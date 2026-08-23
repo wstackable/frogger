@@ -53,6 +53,10 @@ const profile = await Deno.makeTempDir();
 const chrome = new Deno.Command(CHROME, {
   args: [
     "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+    /* Without this the test browser plays the game's music out of the
+       speakers, which is startling. WebAudio still renders, so the engine
+       level measurements below are unaffected. */
+    "--mute-audio",
     `--remote-debugging-port=${CDP_PORT}`,
     `--user-data-dir=${profile}`,
     "--window-size=700,820",
@@ -382,6 +386,89 @@ try {
     pageErrors.length + consoleErrors.length === palErrs,
     [...pageErrors, ...consoleErrors].slice(palErrs).join(" | "));
   await evaluate("frogger.Art.setPalette(0)");
+
+  /* ------------------------------------------- the bonus round and engine */
+  console.log("\n== the monster truck engine really makes a noise ==");
+
+  await evaluate(`CONFIG.sound = true; frogger.startGame();
+    frogger.game.level = frogger.BONUS.firstLevel - 1;
+    frogger.advanceLevel();`);
+  await frames(20);
+
+  check("the rampage starts", await evaluate("frogger.inBonus() === true"),
+    await evaluate("frogger.game.state"));
+  check("the engine is running", await evaluate("frogger.Engine.running === true"));
+
+  /* Tap the engine's own output with an analyser and measure it. Checking the
+     nodes exist proves nothing: this proves sound is coming out. */
+  const measure = async (throttle, ms) => await evaluate(`(async () => {
+    const E = frogger.Engine;
+    const ctx = E._ctx;
+    if (!E._nodes) return -1;
+    if (!window.__an) {
+      window.__an = ctx.createAnalyser();
+      window.__an.fftSize = 2048;
+    }
+    try { E._nodes.out.connect(window.__an); } catch (e) {}
+    E._revUntil = 0;
+    E.setThrottle(${throttle});
+    await new Promise(r => setTimeout(r, ${ms}));
+    E._revUntil = 0;
+    E.setThrottle(${throttle});
+    const buf = new Float32Array(window.__an.fftSize);
+    window.__an.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    return Math.sqrt(sum / buf.length);
+  })()`);
+
+  const idleLevel = await measure(0, 500);
+  const fullLevel = await measure(1, 500);
+
+  check("the engine is audible at idle", idleLevel > 0.0005, `rms ${idleLevel}`);
+  check("it gets louder under throttle", fullLevel > idleLevel,
+    `idle ${idleLevel.toFixed(5)} vs full ${fullLevel.toFixed(5)}`);
+  check("it is not clipping", fullLevel < 0.7, `rms ${fullLevel}`);
+
+  check("the radio switched to the bonus track",
+    await evaluate("frogger.Music.trackName() === frogger.BONUS.music"),
+    await evaluate("frogger.Music.trackName()"));
+
+  /* Drive it around for a bit and make sure nothing throws. */
+  const bonusErrs = pageErrors.length + consoleErrors.length;
+  await evaluate(`(() => {
+    let n = 0;
+    window.__drive = setInterval(() => {
+      n++;
+      const h = frogger.held;
+      h.up = n % 7 < 4; h.down = false;
+      h.left = n % 11 < 5; h.right = n % 11 >= 5;
+    }, 50);
+  })()`);
+  await new Promise((r) => setTimeout(r, 2500));
+  await evaluate("clearInterval(window.__drive); Object.keys(frogger.held).forEach(k => frogger.held[k] = false)");
+
+  check("driving around smashed things",
+    await evaluate("frogger.bonus.smashed > 0"),
+    String(await evaluate("frogger.bonus.smashed")));
+  check("the rampage drew cleanly",
+    pageErrors.length + consoleErrors.length === bonusErrs,
+    [...pageErrors, ...consoleErrors].slice(bonusErrs).join(" | "));
+
+  /* Let it finish and check the engine cuts and the radio comes back. */
+  await evaluate("frogger.bonus.timeLeft = 0.05");
+  await frames(30);
+  check("the engine cuts when the rampage ends",
+    await evaluate("frogger.Engine.running === false"),
+    await evaluate("frogger.game.state"));
+  check("it released its nodes", await evaluate("frogger.Engine._nodes === null"));
+
+  await evaluate("frogger.game.stateTime = frogger.BONUS.resultsTime + 1");
+  await frames(20);
+  check("play resumes", await evaluate("frogger.game.state === 'play'"),
+    await evaluate("frogger.game.state"));
+
+  await evaluate("CONFIG.music = false; frogger.Music.stop()");
 
   /* ---------------------------------------------------- no console noise */
   console.log("\n== the console is clean ==");
