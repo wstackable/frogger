@@ -2189,6 +2189,7 @@ console.log("\n== the speedboat boss ==");
 const BOAT_LEVEL = api.LEVELS.findIndex(l => l.kind === "boat") + 1;
 
 check("there is a boss level in the plan", BOAT_LEVEL > 0);
+check("it is the last level, so it is the boss", BOAT_LEVEL === api.LEVELS.length);
 
 function onTheRiver() {
   api.startGame(BOAT_LEVEL);
@@ -2204,161 +2205,403 @@ check("it opens with a briefing then hands over", (() => {
   return game.state === "boat";
 })(), game.state);
 
-check("it is the last level, so it is the boss", BOAT_LEVEL === api.LEVELS.length);
-
 check("it does not fall through to a normal crossing", (() => {
   if (!onTheRiver()) return false;
-  /* A crossing would have a frog on a board. This has a boat on a river. */
-  return api.boat.hull === api.BOAT.hull && game.state === "boat";
+  return api.boat.segs.length > 0 && game.state === "boat";
 })());
 
-check("the projection puts far things higher and smaller than near ones", (() => {
+/* --- the course itself --- */
+
+check("the course is a list of segments", (() => {
+  if (!onTheRiver()) return false;
+  return api.boat.segs.length === api.BOAT.segments;
+})(), String(api.boat.segs.length));
+
+check("and it actually bends, rather than being a straight line", (() => {
+  const bends = api.boat.segs.filter(sg => Math.abs(sg.curve) > 0.005).length;
+  /* A straight river is a screensaver. Most of it should be turning. */
+  return bends > api.BOAT.segments * 0.3;
+})(), `${api.boat.segs.filter(sg => Math.abs(sg.curve) > 0.005).length} bent`);
+
+check("and it rises and falls", (() => {
+  return api.boat.segs.some(sg => sg.hill > 1) &&
+         api.boat.segs.some(sg => sg.hill < -1);
+})());
+
+check("bends ease in and out instead of snapping on a segment", (() => {
+  let worst = 0;
+  for (let i = 1; i < api.boat.segs.length; i++) {
+    worst = Math.max(worst, Math.abs(api.boat.segs[i].curve - api.boat.segs[i - 1].curve));
+  }
+  return worst < api.BOAT.bendMax * 0.25;
+})());
+
+check("the same course every time, so it can be learned", (() => {
+  const before = api.boat.segs.map(sg => sg.curve).join(",");
+  api.buildCourse();
+  return api.boat.segs.map(sg => sg.curve).join(",") === before;
+})());
+
+check("laying out the course does not disturb the crossing levels' rng", (() => {
+  /* It has its own generator for exactly this reason. */
+  api.startGame(1);
+  frames(1);
+  const a = lanes.map(l => l.obstacles.map(o => Math.round(o.x)).join()).join("|");
+  api.buildCourse();
+  api.startGame(1);
+  frames(1);
+  const b = lanes.map(l => l.obstacles.map(o => Math.round(o.x)).join()).join("|");
+  return a === b;
+})());
+
+/* --- the projection --- */
+
+check("far things are higher up the screen and smaller", (() => {
   const near = api.boatProject(0);
-  const far = api.boatProject(api.BOAT.depth);
+  const far = api.boatProject(api.BOAT.draw * api.BOAT.segLen);
   return far.y < near.y && far.scale < near.scale && far.scale > 0;
 })());
 
-check("the horizon is above the waterline", () => true);
 check("the river narrows towards the horizon", (() => {
   const near = api.boatProject(0);
-  const far = api.boatProject(api.BOAT.depth);
-  const nearW = Math.abs(api.boatScreenX(api.BOAT.riverHalf, near.scale) -
-                         api.boatScreenX(-api.BOAT.riverHalf, near.scale));
-  const farW = Math.abs(api.boatScreenX(api.BOAT.riverHalf, far.scale) -
-                        api.boatScreenX(-api.BOAT.riverHalf, far.scale));
+  const far = api.boatProject(api.BOAT.draw * api.BOAT.segLen);
+  const nearW = Math.abs(api.boatScreenX(api.BOAT.riverHalf, near.scale, 0) -
+                         api.boatScreenX(-api.BOAT.riverHalf, near.scale, 0));
+  const farW = Math.abs(api.boatScreenX(api.BOAT.riverHalf, far.scale, 0) -
+                        api.boatScreenX(-api.BOAT.riverHalf, far.scale, 0));
   return farW < nearW * 0.4;
 })());
 
-check("the throttle closes the gap and coasting does not", (() => {
+check("a bend drags the far river sideways on screen", (() => {
   if (!onTheRiver()) return false;
-  api.boat.bossZ = api.BOAT.bossGap;
-  api.held.up = true;
-  frames(30);
-  const closed = api.BOAT.bossGap - api.boat.bossZ;
-  api.held.up = false;
-  api.boat.bossZ = api.BOAT.bossGap;
-  frames(30);
-  const drifted = api.BOAT.bossGap - api.boat.bossZ;
-  return closed > drifted;
+  /* Park on the sharpest bend in the course and look up it. */
+  let best = 0, at = 0;
+  api.boat.segs.forEach((sg, i) => {
+    if (Math.abs(sg.curve) > best) { best = Math.abs(sg.curve); at = i; }
+  });
+  api.boat.pos = at;
+  api.walkCourse();
+  const near = api.segAt(at + 2);
+  const far = api.segAt(at + api.BOAT.draw - 4);
+  return Math.abs(far.drift) > Math.abs(near.drift) + 0.5;
 })());
 
-check("the throttle is a resource, and it comes back off it", (() => {
+/* --- driving it --- */
+
+check("the throttle winds it up and the brake scrubs it off", (() => {
   if (!onTheRiver()) return false;
+  api.boat.things.length = 0;          /* measuring the throttle, not the course */
   api.held.up = true;
   frames(40);
-  const burned = api.boat.fuel;
+  const fast = api.boat.speed;
   api.held.up = false;
-  frames(60);
-  return burned < api.BOAT.boostFuel && api.boat.fuel > burned;
+  api.held.down = true;
+  frames(40);
+  const slow = api.boat.speed;
+  api.held.down = false;
+  return fast > api.BOAT.idle && slow < fast;
 })());
 
-check("ramming the stern hurts it", (() => {
+check("it will not go faster than flat out", (() => {
   if (!onTheRiver()) return false;
-  const before = api.boat.bossHits;
-  api.boat.bossZ = 0.2;
-  api.boat.x = api.boat.bossX;
-  frames(2);
-  return api.boat.bossHits > before;
+  api.boat.things.length = 0;
+  api.held.up = true;
+  frames(60 * 6);
+  api.held.up = false;
+  return api.boat.speed <= api.BOAT.top + 0.001;
+})(), String(api.boat.speed));
+
+check("off the throttle it settles rather than stopping dead", (() => {
+  if (!onTheRiver()) return false;
+  frames(60 * 5);
+  return api.boat.speed > 0;
+})(), String(api.boat.speed));
+
+check("a bend throws you at the outside bank", (() => {
+  if (!onTheRiver()) return false;
+  let best = 0, at = 0;
+  api.boat.segs.forEach((sg, i) => {
+    if (Math.abs(sg.curve) > best) { best = Math.abs(sg.curve); at = i; }
+  });
+  const dir = Math.sign(api.segAt(at).curve);
+  api.boat.pos = at;
+  api.boat.x = 0;
+  api.boat.speed = api.BOAT.top;
+  api.held.up = true;
+  frames(8);
+  api.held.up = false;
+  /* Pushed the opposite way to the way the river is turning. */
+  return Math.sign(api.boat.x) === -dir && Math.abs(api.boat.x) > 0.01;
+})(), String(api.boat.x));
+
+check("the faster you take it, the harder it throws you", (() => {
+  if (!onTheRiver()) return false;
+  let best = 0, at = 0;
+  api.boat.segs.forEach((sg, i) => {
+    if (Math.abs(sg.curve) > best) { best = Math.abs(sg.curve); at = i; }
+  });
+
+  const run = (speed) => {
+    api.boat.pos = at;
+    api.boat.x = 0;
+    api.boat.speed = speed;
+    for (let i = 0; i < 8; i++) { api.boat.pos = at; frames(1); }
+    return Math.abs(api.boat.x);
+  };
+  const slow = run(api.BOAT.idle);
+  const fast = run(api.BOAT.top);
+  return fast > slow;
 })());
 
-check("and it backs off again rather than sitting there to be farmed", (() => {
-  return api.boat.bossZ > api.BOAT.ramRange;
-})(), String(api.boat.bossZ));
-
-check("a mine costs hull", (() => {
+check("scraping the bank at speed spins you out", (() => {
   if (!onTheRiver()) return false;
-  const before = api.boat.hull;
+  const before = api.boat.spins;
   api.boat.hurtAt = -99;
-  api.boat.mines.push({ x: api.boat.x, z: 0.1, hit: false });
+  api.boat.speed = api.BOAT.top;
+  api.boat.x = 5;
   frames(2);
-  return api.boat.hull === before - 1;
+  return api.boat.spins === before + 1 && game.time < api.boat.spinUntil;
 })());
 
-check("but not twice in the same instant", (() => {
+check("but nudging it slowly just slows you down", (() => {
   if (!onTheRiver()) return false;
   api.boat.hurtAt = -99;
-  api.boat.mines.push({ x: api.boat.x, z: 0.1, hit: false });
+  api.boat.speed = api.BOAT.idle * 0.4;
+  const before = api.boat.spins;
+  api.boat.x = 5;
   frames(2);
-  const after = api.boat.hull;
-  api.boat.mines.push({ x: api.boat.x, z: 0.1, hit: false });
-  frames(2);
-  return api.boat.hull === after;
+  return api.boat.spins === before;
 })());
 
-check("running out of hull ends the run, and you lost", (() => {
+check("a crash takes your speed away, which is what makes it cost something", (() => {
   if (!onTheRiver()) return false;
-  while (api.boat.hull > 0 && game.state === "boat") {
-    api.boat.hurtAt = -99;
-    api.hurtBoat("TEST");
-  }
-  return game.state === "boatResults" && api.boat.won === false;
-})(), game.state);
+  api.boat.hurtAt = -99;
+  api.boat.speed = api.BOAT.top;
+  api.spinOut("TEST");
+  return api.boat.speed <= api.BOAT.crashTo;
+})(), String(api.boat.speed));
 
-check("six rams sinks it and you won", (() => {
+check("nothing but the clock can end the run", (() => {
   if (!onTheRiver()) return false;
-  for (let i = 0; i < api.BOAT.bossHits; i++) {
-    api.boat.bossZ = 0.2;
-    api.boat.x = api.boat.bossX;
-    frames(2);
-  }
-  return api.boat.won === true && api.boat.bossHits >= api.BOAT.bossHits;
-})(), `hits ${api.boat.bossHits}`);
-
-check("it goes down on screen before the tally", (() => {
-  /* Straight to a results panel made six rams feel like a spreadsheet entry. */
-  return api.boat.sinkAt > 0 && game.state === "boat";
+  /* Spin out twenty times. In a racer that costs you the race, not your life. */
+  for (let i = 0; i < 20; i++) { api.boat.hurtAt = -99; api.spinOut("TEST"); }
+  frames(4);
+  return game.state === "boat";
 })(), game.state);
 
-check("and the tally does arrive", (() => {
-  frames(60 * 3);
-  return game.state === "boatResults";
-})(), game.state);
+/* --- the furniture --- */
 
-check("the boss has more than one temper", api.BOAT.phases.length >= 2);
+check("the river is furnished with Frogger's own things", (() => {
+  if (!onTheRiver()) return false;
+  const kinds = new Set(api.boat.things.map(t => t.kind));
+  return kinds.has("log") && kinds.has("turtle") &&
+         kinds.has("croc") && kinds.has("buoy");
+})(), [...new Set(api.boat.things.map(t => t.kind))].join(","));
 
-check("it gets angrier as you hurt it", (() => {
-  const ph = api.BOAT.phases;
-  for (let i = 1; i < ph.length; i++) {
-    if (ph[i].at <= ph[i - 1].at) return false;      /* thresholds climb */
-    if (ph[i].weave <= ph[i - 1].weave) return false; /* weaves harder */
-    if (ph[i].mine >= ph[i - 1].mine) return false;   /* mines more often */
+check("turtle rafts come and go, so the gap opens and closes", (() => {
+  if (!onTheRiver()) return false;
+  const t = api.boat.things.find(x => x.kind === "turtle");
+  if (!t) return false;
+  const seen = new Set();
+  for (let i = 0; i < 60 * 8; i++) { seen.add(api.turtleUp(t)); frames(1); }
+  return seen.has(true) && seen.has(false);
+})());
+
+check("a submerged raft cannot hit you", (() => {
+  const t = api.boat.things.find(x => x.kind === "turtle");
+  if (!t) return false;
+  /* Solid exactly when it is up, and never when it is under. */
+  for (let i = 0; i < 200; i++) {
+    if (api.thingSolid(t) !== api.turtleUp(t)) return false;
+    frames(1);
   }
   return true;
 })());
 
-check("it starts shooting back at some point", (() => {
-  return api.BOAT.phases.some((p) => p.shootEvery > 0) &&
-         api.BOAT.phases[0].shootEvery === 0;
+check("buoys are scenery, not obstacles", (() => {
+  const b = api.boat.things.find(x => x.kind === "buoy");
+  return !!b && api.thingSolid(b) === false;
 })());
 
-check("a shot costs hull", (() => {
+check("hitting a log spins you out", (() => {
   if (!onTheRiver()) return false;
-  const before = api.boat.hull;
+  const before = api.boat.spins;
   api.boat.hurtAt = -99;
-  api.boat.shots.push({ x: api.boat.x, z: 0.1, hit: false });
+  api.boat.things.push({ seg: api.boat.pos + 0.2, kind: "log",
+                         x: api.boat.x, half: 0.34, dead: false, phase: 0 });
   frames(2);
-  return api.boat.hull === before - 1;
+  return api.boat.spins === before + 1;
 })());
 
-check("the gorge has banks streaming past", (() => {
+/* --- checkpoints --- */
+
+check("there are checkpoint gates down the course", (() => {
   if (!onTheRiver()) return false;
-  return api.boat.props.length === api.BOAT.props &&
-         api.boat.props.some(p => p.side === -1) &&
-         api.boat.props.some(p => p.side === 1);
+  return api.boat.gates.length >= 3;
+})(), String(api.boat.gates.length));
+
+check("passing one puts time back on the clock", (() => {
+  if (!onTheRiver()) return false;
+  const g = api.boat.gates[0];
+  api.boat.timeLeft = 3;
+  api.boat.pos = g.seg + 0.1;
+  frames(2);
+  return g.taken === true && api.boat.timeLeft > 3 && api.boat.gatesMade > 0;
+})(), `left ${api.boat.timeLeft}`);
+
+check("and it only counts once", (() => {
+  const made = api.boat.gatesMade;
+  frames(10);
+  return api.boat.gatesMade === made;
 })());
 
-check("running out of time means it got away", (() => {
+check("running the clock out ends the run and you lost", (() => {
   if (!onTheRiver()) return false;
   api.boat.timeLeft = 0.01;
   frames(4);
   return game.state === "boatResults" && api.boat.won === false;
 })(), game.state);
 
+/* --- the boss --- */
+
+check("the boss stays out in front", (() => {
+  if (!onTheRiver()) return false;
+  frames(60);
+  return api.boat.bossPos > api.boat.pos;
+})());
+
+check("it runs harder when you are right behind it", (() => {
+  if (!onTheRiver()) return false;
+  api.boat.bossPos = api.boat.pos + 0.5;
+  const near = api.boat.bossPos;
+  frames(6);
+  const closeRun = api.boat.bossPos - near;
+
+  api.boat.bossPos = api.boat.pos + api.BOAT.bossGap * 3;
+  const far = api.boat.bossPos;
+  frames(6);
+  const farRun = api.boat.bossPos - far;
+  return closeRun > farRun;
+})());
+
+check("ramming its stern hurts it", (() => {
+  if (!onTheRiver()) return false;
+  const before = api.boat.bossHits;
+  api.boat.bossPos = api.boat.pos + api.BOAT.ramRange * 0.5;
+  api.boat.x = api.boat.bossX;
+  frames(2);
+  return api.boat.bossHits > before;
+})(), String(api.boat.bossHits));
+
+check("and it backs off rather than sitting there to be farmed", (() => {
+  return api.boat.bossPos - api.boat.pos > api.BOAT.ramRange;
+})(), String(api.boat.bossPos - api.boat.pos));
+
+check("the boss is mathematically catchable", (() => {
+  /* Closing speed at the moment you are right on it. If this is not positive
+     the chase cannot be won however well you drive, which is exactly what the
+     first version of this level shipped as. */
+  const closing = api.BOAT.top * (1 - api.BOAT.bossPace) - api.BOAT.bossRun;
+  return closing > 0.5;
+})(), `closes at ${(api.BOAT.top * (1 - api.BOAT.bossPace) - api.BOAT.bossRun).toFixed(2)} seg/s`);
+
+check("but it does not just sit there waiting to be hit", (() => {
+  /* It has to be faster than your cruising speed, or you catch it by holding
+     one key and there is no chase in it. */
+  return api.BOAT.top * api.BOAT.bossPace > api.BOAT.idle * 1.5;
+})());
+
+check("the boss has more than one temper", api.BOAT.phases.length >= 2);
+
+check("it gets angrier as you hurt it", (() => {
+  const ph = api.BOAT.phases;
+  for (let i = 1; i < ph.length; i++) {
+    if (ph[i].at <= ph[i - 1].at) return false;
+    if (ph[i].weave <= ph[i - 1].weave) return false;
+    if (ph[i].drop >= ph[i - 1].drop) return false;
+  }
+  return true;
+})());
+
+check("it starts shooting back at some point, but not straight away", (() => {
+  return api.BOAT.phases.some(p => p.shootEvery > 0) &&
+         api.BOAT.phases[0].shootEvery === 0;
+})());
+
+check("a shot spins you out", (() => {
+  if (!onTheRiver()) return false;
+  const before = api.boat.spins;
+  api.boat.hurtAt = -99;
+  api.boat.shots.push({ pos: api.boat.pos, x: api.boat.x, hit: false });
+  frames(2);
+  return api.boat.spins === before + 1;
+})());
+
+check("the boss's logs do not pile up until the river is impassable", (() => {
+  if (!onTheRiver()) return false;
+  /* They used to be dropped and never cleaned up, so over a minute two dozen
+     of them filled every lateral the boss had weaved through and no line
+     existed anywhere. */
+  for (let i = 0; i < 60 * 45; i++) frames(1);
+  const dropped = api.boat.things.filter(t => t.dropped && !t.dead).length;
+  return dropped <= api.BOAT.maxDropped;
+})(), String(api.boat.things.filter(t => t.dropped && !t.dead).length));
+
+check("four rams sinks it and you won", (() => {
+  if (!onTheRiver()) return false;
+  for (let i = 0; i < api.BOAT.bossHits; i++) api.ramBoss();
+  return api.boat.won === true;
+})());
+
+check("it goes down on screen before the tally", (() => {
+  return api.boat.sinkAt > 0 && game.state === "boat";
+})(), game.state);
+
+check("and the tally does arrive", (() => {
+  frames(60 * 4);
+  return game.state === "boatResults";
+})(), game.state);
+
+check("the banks are furnished so you can see how fast you are going", (() => {
+  if (!onTheRiver()) return false;
+  return api.boat.props.length > 50 &&
+         api.boat.props.some(p => p.side === -1) &&
+         api.boat.props.some(p => p.side === 1);
+})());
+
 check("it gets its own environment, not a reused one", (() => {
   const env = api.LEVELS[BOAT_LEVEL - 1].env;
   const others = api.LEVELS.filter((l, i) => i !== BOAT_LEVEL - 1).map(l => l.env);
   return !!api.ENVIRONMENTS[env] && !others.includes(env);
 })(), api.LEVELS[BOAT_LEVEL - 1].env);
+
+console.log("\n== the right song on the right level ==");
+
+check("every track a level claims actually exists", (() => {
+  const names = new Set(api.TRACKS.map((t) => t.name));
+  const missing = [];
+  for (const l of api.LEVELS) if (l.music && !names.has(l.music)) missing.push(l.music);
+  for (const k of Object.keys(api.MUSIC.forKind || {})) {
+    if (!names.has(api.MUSIC.forKind[k])) missing.push(api.MUSIC.forKind[k]);
+  }
+  if (!names.has(api.MUSIC.startWith)) missing.push(api.MUSIC.startWith);
+  return missing.length === 0 ? true : missing.join(", ");
+})() === true, "a level asks for a track that is not there");
+
+check("the chopper gets Laser Knights", (() => {
+  const heli = api.LEVELS.find((l) => l.kind === "heli");
+  return heli && heli.music === "Laser Knights";
+})());
+
+check("the boneyard gets Boneyard", (() => {
+  const bone = api.LEVELS.find((l) => l.rules && l.rules.ghost);
+  return bone && bone.music === "Boneyard";
+})());
+
+check("a claimed track drops out of the shuffle", (() => {
+  const reserved = api.Music.reservedNames();
+  return reserved.has("Laser Knights") && reserved.has("Boneyard");
+})());
 
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -525,6 +525,108 @@ for (const level of CROSS_LEVELS) {
     `no frogs home. deaths: ${JSON.stringify(r.byReason)}`);
 }
 
+/* --------------------------------------------------------------------------
+   The boss run is not a crossing, so the hopping bot cannot judge it. It gets
+   its own driver: read the river, pick a lane that clears everything in the
+   window, aim at the boss when the lane is free, and only use the throttle
+   when there is time to be where you need to be.
+
+   This is the check that would have caught the two ways the first version was
+   unwinnable: a course where three hazard sequences could coincide and wall
+   the river off, and a boss whose flee speed beat your top speed so the last
+   five segments could never be closed.
+   -------------------------------------------------------------------------- */
+console.log("\n== the boss run can actually be won ==");
+
+function driveTheBossRun(maxFrames) {
+  const B = api.BOAT;
+  const b = api.boat;
+  const level = api.LEVELS.findIndex((l) => l.kind === "boat") + 1;
+
+  api.startGame(level);
+  frames(Math.ceil(B.introTime * 60) + 6);
+
+  let f = 0;
+  while (game.state === "boat" && f < maxFrames) {
+    const here = api.segAt(Math.floor(b.pos));
+    const lead = here.curve * 14;
+
+    const near = [];
+    for (const t of b.things) {
+      const soon = t.kind === "turtle" ? api.turtleState(t) !== "down"
+                                       : api.thingSolid(t);
+      if (!soon) continue;
+      const d = t.seg - b.pos;
+      if (d > 0.2 && d < 34) near.push(t);
+    }
+    for (const sh of b.shots) {
+      if (sh.hit) continue;
+      const d = sh.pos - b.pos;
+      if (d > 0.2 && d < 34) near.push({ x: sh.x, half: 0.3, seg: sh.pos });
+    }
+
+    const lands = (c) => Math.max(-0.9, Math.min(0.9, c + lead));
+    const clear = (c) => near.every((t) => Math.abs(t.x - lands(c)) > t.half + 0.34);
+
+    let want = null;
+    if (clear(b.bossX - lead)) want = b.bossX - lead;
+    else {
+      let best = null;
+      for (let c = -0.9; c <= 0.901; c += 0.04) {
+        if (!clear(c)) continue;
+        const cost = Math.abs(lands(c) - b.x) + Math.abs(lands(c) - b.bossX) * 0.25;
+        if (!best || cost < best.cost) best = { c, cost };
+      }
+      want = best ? best.c : null;
+    }
+    const noLane = want === null;
+    if (noLane) want = b.x - lead;
+
+    const off = Math.abs(b.x - lands(want));
+    const closest = near.length ? Math.min(...near.map((t) => t.seg - b.pos)) : 99;
+    const comfy = (off / B.steer) < (closest / Math.max(1, b.speed)) * 0.35;
+
+    api.held.left  = b.x > lands(want) + 0.02;
+    api.held.right = b.x < lands(want) - 0.02;
+    api.held.up    = !noLane && comfy;
+    api.held.down  = noLane || (!comfy && (closest / Math.max(1, b.speed)) < 1.1);
+
+    frames(1);
+    f++;
+  }
+
+  api.held.left = api.held.right = api.held.up = api.held.down = false;
+  return { won: b.won, rams: b.rams, spins: b.spins, gates: b.gatesMade,
+           seconds: f / 60 };
+}
+
+/* Twice, because the boss's weave and the turtle rafts are on wall-clock
+   phases, so two runs are two genuinely different fights. Both have to be
+   winnable, not just a lucky one. */
+const runs2 = [driveTheBossRun(60 * 150), driveTheBossRun(60 * 150)];
+const run = runs2.reduce((a, b) => (a.won ? a : b));
+
+runs2.forEach((r, i) => {
+  console.log(`     run ${i + 1}: won=${r.won} rams=${r.rams}/${api.BOAT.bossHits} ` +
+              `spins=${r.spins} checkpoints=${r.gates} in ${r.seconds.toFixed(1)}s`);
+});
+
+check("a driver who reads the river beats the boss, both times", (() => {
+  return runs2.every((r) => r.won === true);
+})(), runs2.map((r) => `${r.rams}/${api.BOAT.bossHits} in ${r.seconds.toFixed(0)}s`).join(", "));
+
+check("and does not have to drive perfectly to do it", run.spins >= 1,
+  "won without ever touching anything, which means nothing is in the way");
+
+check("the checkpoints are doing their job", run.gates >= 2,
+  `${run.gates} checkpoints`);
+
+check("the boss is catchable on the numbers, not just this once", (() => {
+  const closing = api.BOAT.top * (1 - api.BOAT.bossPace) - api.BOAT.bossRun;
+  return closing > 0.5;
+})(), `closes at ${(api.BOAT.top * (1 - api.BOAT.bossPace) - api.BOAT.bossRun).toFixed(2)} seg/s`);
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 
 if (fail) Deno.exit(1);

@@ -247,7 +247,8 @@ const LEVELS = [
     rules: { dark: true } },
 
   { name: 'Chopper Support',
-    blurb: 'clear the road, and mind the aliens. they shoot back.',  kind: 'heli',   env: 'desert' },
+    blurb: 'clear the road, and mind the aliens. they shoot back.',  kind: 'heli',   env: 'desert',
+    music: 'Laser Knights' },
 
   { name: 'Snake Pit',
     blurb: 'snakes on the median. the safe row is not safe.',        kind: 'cross',  env: 'jungle',
@@ -255,8 +256,9 @@ const LEVELS = [
     hazards: ['fly', 'lady', 'bayCroc', 'snake', 'diving'] },
 
   { name: 'The Boneyard',
-    blurb: 'the world only moves when you do. stand still and they come.',     kind: 'cross',  env: 'boneyard',
+    blurb: 'the world only moves when you do. stand still and they hold.',     kind: 'cross',  env: 'boneyard',
     speed: 1.05, roadLanes: 5, river: 'normal', hazards: ['fly', 'diving'],
+    music: 'Boneyard',
     rules: { ghost: true } },
 
   { name: 'Croc Alley',
@@ -486,58 +488,129 @@ const SNAKE = {
    ========================================================================== */
 
 const BOAT = {
-  /* --- the river --- */
-  riverHalf: 1.0,     /* how wide the water is either side of the middle */
-  depth:     22,      /* how far up the river you can see */
-  horizon:   0.32,    /* where the skyline sits, down the playfield */
-  camera:    2.2,     /* camera height. bigger makes things rush up slower. */
-  spread:    1.5,     /* how wide the near bank is on screen, in screen halves */
 
-  /* --- your boat --- */
-  hull:      5,       /* hits you can take before the run is over */
-  steer:     2.3,     /* how fast you swing across the river */
-  cruise:    9.5,     /* world units a second at rest on the throttle */
-  boost:     1.85,    /* multiplier with the throttle down */
-  boostFuel: 3.4,     /* seconds of it */
-  refill:    0.5,     /* seconds of throttle recovered per second off it */
-  grace:     1.1,     /* seconds you cannot be hit again after being hit */
+  /* --- the course -------------------------------------------------------
+     Built out of segments, the way every pseudo-3D racer since Pole Position
+     has done it. Each segment carries a curve and a hill, the renderer walks
+     them from your bow to the horizon accumulating both, and that accumulated
+     drift is what makes the river bend and roll away in front of you.
 
-  /* --- the boss --- */
-  bossHits:  6,       /* rams it takes */
-  bossGap:   7.5,     /* how far ahead it starts, and retreats to after a ram */
-  bossWeave: 0.7,     /* how fast it swings across the river */
-  bossRange: 0.72,    /* and how far, as a fraction of the river */
-  bossRun:   2.4,     /* how hard it pulls away when you are close */
-  ramRange:  1.1,     /* how close counts as a ram */
+     A straight river is a screensaver. The bends are the game. */
+  segments: 620,      /* how many segments the course is, before it wraps */
+  draw:     120,      /* how many of them are drawn ahead of you */
+  segLen:   1.0,      /* world units per segment */
 
-  /* --- what it drops --- */
-  mineEvery: 0.9,     /* seconds between mines */
-  mineHalf:  0.30,    /* how wide a mine is, in world units */
+  bendMax:  0.075,    /* how hard the sharpest bend pulls */
+  hillMax:  120,      /* how high the biggest crest rides, in pixels */
 
-  /* --- pacing --- */
-  duration:   90,     /* seconds before the river runs out */
-  introTime: 3.2,
-  resultsTime: 4.2,
+  riverHalf: 1.0,     /* half the navigable width, in world units */
+  camera:    2.7,     /* camera height. bigger makes things rush up slower. */
+  horizon:   0.30,    /* where the skyline sits down the playfield */
+  spread:    1.42,    /* how wide the near bank is, in screen halves */
 
-  /* --- the boss fights back ---
-     It has three tempers. Every couple of rams it gets angrier: it weaves
-     faster, mines more often, and from the second phase it starts shooting
-     back down the river at you. A boss that only runs away is a chase, not a
-     boss. */
+  /* --- your boat --------------------------------------------------------
+     A throttle and a brake, not a fuel gauge. The tension is the course. */
+  top:     34,        /* segments a second, flat out */
+  idle:    11,        /* what it settles back to off the throttle */
+  accel:   19,        /* how fast it picks up */
+  brake:   38,        /* how fast DOWN scrubs it off */
+  drag:     9,        /* how fast it bleeds back to idle on its own */
+  crashTo:  14,        /* what a crash drops you to */
+
+  steer:      1.9,    /* how fast you swing across the river */
+  /* How hard a bend throws you at the outside bank. Deliberately about six
+     tenths of what `steer` can hold at full curve and flat out: enough that
+     the line matters, not so much that the river drives for you. */
+  centrifugal: 10.5,
+  bankPush:   0.55,   /* how much of your speed the bank takes when you scrape */
+
+  /* There are no lives here, and that is deliberate.
+
+     The first pass gave you five hits and took one for every log you clipped,
+     which made a racing level feel like a stealth level: one unlucky raft and
+     the run was written off. Pole Position never did that. In an arcade racer
+     a crash costs you the one thing that matters, which is time, and the
+     clock is the only thing that can actually end you.
+
+     So: hit something and you spin out and lose all your speed, which is
+     worth a second or two of the clock. Get through a checkpoint and the
+     clock goes back up. That is the whole game. */
+  grace:    0.7,      /* seconds you cannot be spun again after spinning */
+  spinTime: 0.45,     /* how long you are a passenger for */
+
+  /* --- the course furniture --------------------------------------------
+     Frogger's own vocabulary, seen from the water: logs across the channel,
+     turtle rafts that surface and dive, crocodiles drifting down at you, and
+     buoys marking the line you are supposed to be taking. */
+  /* Spacing. At flat out you cover about 34 segments a second, so a gap of 40
+     is a bit over a second to read the next thing and move, which is the
+     right ask. They are laid as one ordered run rather than three independent
+     ones, so two things can never land close enough to wall the river off. */
+  clearStart:  52,    /* the opening stretch is empty, so the level can teach */
+  hazardGap:   60,    /* minimum segments between one thing and the next */
+  hazardVary:  26,    /* and up to this much more, so it is not metronomic */
+  buoyEvery:   11,    /* channel markers. scenery, not hazards. */
+
+  /* Turtle rafts run the same three phases as the ones in the crossing rows,
+     and for the same reason: a raft that pops up under you with no warning is
+     not a hazard, it is a dice roll. Down is bubbles, rising is visible and
+     still safe, up is solid. */
+  turtleDown:   2.2,  /* seconds under, bubbles only */
+  turtleRising: 0.7,  /* surfacing. visible, STILL SAFE. this is the warning. */
+  turtleUp:     3.0,  /* up and solid */
+
+  /* --- checkpoints ------------------------------------------------------
+     Straight out of the arcade. Get through the gate and the clock goes back
+     up. Miss too many and the river runs out from under you. */
+  gateEvery: 110,     /* segments between gates */
+  gateTime:  7,       /* seconds the clock goes back up by */
+
+  /* --- the boss ---------------------------------------------------------
+     It is out in front the whole way. You catch it by driving better than it
+     does, which means carrying speed through the bends rather than into them. */
+  bossHits:  4,      /* rams to sink it */      /* rams to sink it */
+  bossGap:   9,       /* segments ahead it sits, and falls back to after a ram */
+  bossWeave: 0.75,
+  bossRange: 0.7,
+  /* These two have to be solved, not guessed at.
+
+     The boss runs at bossPace times your speed, plus up to bossRun more when
+     you are right on it. So the closing speed at the very last moment is
+     top * (1 - bossPace) - bossRun. If that is negative the boss is
+     mathematically uncatchable however well you drive, and the first pass had
+     it at 34 * 0.10 - 9, which is very much negative. Six rams was not hard,
+     it was impossible.
+
+     At 0.84 and 3.5 the last yard closes at about two segments a second:
+     tense, and reachable. */
+  bossPace:  0.78,
+  bossRun:   3.5,     /* how much harder it runs when you are on its transom */
+  bossMin:   0.9,     /* and it never lets you get past it */
+  ramRange:  1.5,     /* how close counts as a ram */
+  ramWidth:  0.50,    /* and how well lined up you have to be */
+
+  /* Every couple of rams it gets angrier: weaves harder, drops more, and from
+     the second temper it starts firing back down the river at you. */
+  /* Thresholds sit at 2 and 3 so that in a four-ram fight you actually meet
+     all three tempers: two clean hits, then it turns, then the last stand,
+     then it goes down. A threshold at 4 would be a temper nobody ever sees. */
   phases: [
-    { at: 0, weave: 1.0, mine: 1.0, shootEvery: 0,   label: '' },
-    { at: 2, weave: 1.5, mine: 0.7, shootEvery: 1.6, label: 'IT IS ANGRY NOW' },
-    { at: 4, weave: 2.1, mine: 0.5, shootEvery: 1.0, label: 'LAST STAND' },
+    { at: 0, weave: 1.0, drop: 1.0, shootEvery: 0,   label: '' },
+    { at: 2, weave: 1.25, drop: 0.65, shootEvery: 2.2, label: 'IT IS ANGRY NOW' },
+    { at: 3, weave: 1.45, drop: 0.5,  shootEvery: 1.8, label: 'LAST STAND' },
   ],
 
-  shotSpeed:  11,     /* world units a second, coming at you */
-  shotHalf:   0.22,   /* how wide a shot is */
+  dropEvery: 2.3,     /* seconds between the boss dumping a log in your path */
+  maxDropped: 4,      /* how many of its logs can be in the water at once */
+  maxThings: 260,     /* a backstop on the furniture list */
+  shotSpeed: 26,      /* segments a second, coming at you */
 
-  /* --- the banks --- */
-  props: 26,          /* rocks and posts along the gorge, to sell the speed */
-  propSpacing: 1.9,
+  /* --- pacing --- */
+  duration:   45,     /* seconds on the clock before a gate tops it back up */
+  introTime:  3.2,
+  resultsTime: 4.2,
 
-  points: { ram: 400, win: 3000 },
+  points: { ram: 400, gate: 150, win: 3000 },
 };
 
 

@@ -1994,54 +1994,212 @@ function finishRocket() {
 /* ==========================================================================
    SPEEDBOAT BOSS RUN
    --------------------------------------------------------------------------
-   The one level that does not sit on the top-down grid.
+   The final level, and the only one that does not sit on the top-down grid.
 
-   Everything else in this game is drawn straight down onto a board of squares.
-   This is drawn from behind your own boat, looking up a river that narrows to
-   a horizon, so it needs its own projection and its own renderer. The world is
-   two numbers per thing: z, how far up the river it is, and x, how far across,
-   with 0 in the middle and the banks at plus and minus BOAT.riverHalf.
+   It is built the way every pseudo-3D racer since Pole Position has been
+   built. The river is a list of segments, each carrying a curve and a hill.
+   The renderer walks them from your bow out to the horizon, accumulating both
+   as it goes, and draws the water and the banks as a ribbon of quads between
+   consecutive segments. That accumulated drift is the whole trick: it is what
+   makes a flat list of numbers look like a river bending away over a rise.
 
-   project(z) turns that into a screen row and a scale. Everything else, the
-   banks, the water bands, the mines, the boss, is that one function applied to
-   different things, which is what keeps a fake 3D renderer honest.
+   Everything else hangs off the same walk. A log, a buoy, the boss, all of it
+   is "which segment am I on and how far across", projected with that
+   segment's own scale and drift, so it sits in the world rather than on top
+   of it.
 
-   The level is a chase. The boss weaves, drops mines behind it, and pulls away
-   when you get close. Ramming its stern is the only thing that hurts it, and
-   the throttle is how you close the gap, so it asks the same question as the
-   rocket from the other end: spend the boost now, or keep it.
+   Why it works as a game rather than a demo:
+
+     - the bends throw you at the outside bank, so speed has a price and the
+       racing line is a real thing you can be good or bad at
+     - the throttle is a throttle, not a resource. UP winds it up, DOWN scrubs
+       it off, and carrying speed through a bend is the skill
+     - the furniture is Frogger's own: logs across the channel, turtle rafts
+       that surface and dive so a gap opens and closes, crocodiles drifting
+       down at you, buoys marking the line you should be taking
+     - checkpoint gates put time back on the clock, which is the oldest
+       arcade tension there is
+     - the boss is out in front the whole way, and you catch it by driving
+       better than it does
    ========================================================================== */
 
 const boat = {
-  x: 0,               /* across the river, in world units */
-  z: 0,               /* how far we have travelled, for the water bands */
-  hull: 0,
-  fuel: 0,
-  burning: false,
+  /* --- the course --- */
+  segs: [],
+  gates: [],
+  props: [],
+
+  /* --- you --- */
+  pos: 0,             /* distance along the course, in segments */
+  x: 0,               /* across the river, -1 to 1 */
+  speed: 0,
+  spinUntil: 0,
+  spins: 0,
   hurtAt: -99,
 
+  /* --- the boss --- */
+  bossPos: 0,
   bossX: 0,
-  bossZ: 0,
   bossHits: 0,
   bossPhase: 0,
-
-  mines: [],
-  nextMine: 0,
-  shots: [],
-  nextShot: 0,
-  props: [],
-  spray: [],
   phase: 0,
-  phaseAt: -99,
+  nextDrop: 0,
+  nextShot: 0,
   sinkAt: -99,
 
+  /* --- everything floating --- */
+  things: [],
+  shots: [],
+  spray: [],
+
+  /* --- the run --- */
   timeLeft: 0,
+  gateAt: 0,
+  gatesMade: 0,
   rams: 0,
   points: 0,
   outcome: '',
   outcomeAt: -99,
   won: false,
 };
+
+/* A local generator, so laying out the course cannot disturb the seeded rng
+   the crossing levels rely on for their own layouts. Same course every time,
+   which is the point: a racer you cannot learn is not a racer. */
+function courseRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+/* --- building the river -------------------------------------------------- */
+
+function buildCourse() {
+  const rnd = courseRng(1987654321);
+  boat.segs.length = 0;
+
+  /* Stretches of straight, bend and crest, eased in and out so nothing
+     changes on a single segment boundary and snaps. */
+  while (boat.segs.length < BOAT.segments) {
+    const len = 26 + Math.floor(rnd() * 46);
+    const bend = rnd() < 0.32 ? 0 : (rnd() * 2 - 1) * BOAT.bendMax;
+    const rise = rnd() < 0.38 ? 0 : (rnd() * 2 - 1) * BOAT.hillMax;
+
+    for (let n = 0; n < len && boat.segs.length < BOAT.segments; n++) {
+      const ease = Math.sin((n / len) * Math.PI);
+      boat.segs.push({
+        curve: bend * ease,
+        hill:  rise * ease,
+        /* filled in by the render walk each frame */
+        vx: 0, vy: 0, scale: 0, drift: 0, lift: 0,
+      });
+    }
+  }
+
+  buildGates();
+  buildFurniture();
+  buildBanks();
+}
+
+function segAt(i) {
+  const n = boat.segs.length;
+  return boat.segs[((i % n) + n) % n];
+}
+
+function buildGates() {
+  boat.gates.length = 0;
+  for (let i = BOAT.gateEvery; i < BOAT.segments; i += BOAT.gateEvery) {
+    boat.gates.push({ seg: i, taken: false });
+  }
+}
+
+/* Logs, turtle rafts, crocodiles and buoys, laid out down the course.
+
+   Placed as one ordered run with a minimum gap, rather than three independent
+   sequences. Three sequences was the first attempt and it can put a log, a
+   raft and a crocodile within a few segments of each other, which walls the
+   river off completely: there is no line through it, however well you drive.
+   One list with a spacing rule means a way through always exists. */
+function buildFurniture() {
+  boat.things.length = 0;
+  const rnd = courseRng(99991);
+
+  /* Buoys are scenery and can go anywhere, so they are laid separately. */
+  for (let i = 6; i < BOAT.segments; i += BOAT.buoyEvery) {
+    boat.things.push({
+      seg: i, kind: 'buoy', half: 0, dead: false, phase: rnd() * 6.28,
+      x: (i % (BOAT.buoyEvery * 2) === 0 ? -1 : 1) * 0.88,
+    });
+  }
+
+  const KINDS = [
+    { kind: 'log',    half: 0.32, weight: 5 },
+    { kind: 'turtle', half: 0.26, weight: 3 },
+    { kind: 'croc',   half: 0.28, weight: 2 },
+  ];
+  const bag = KINDS.flatMap((k) => Array(k.weight).fill(k));
+
+  let at = BOAT.clearStart;
+  let lastX = 0;
+
+  while (at < BOAT.segments - 8) {
+    const k = bag[Math.floor(rnd() * bag.length)];
+
+    /* Put it somewhere you are not already, so the course keeps asking you to
+       move rather than letting you hold one line the whole way down. */
+    let x = (rnd() * 2 - 1) * 0.66;
+    if (Math.abs(x - lastX) < 0.5) x = -Math.sign(lastX || 1) * (0.28 + rnd() * 0.38);
+    lastX = x;
+
+    boat.things.push({
+      seg: at, kind: k.kind, half: k.half, x,
+      dead: false, phase: rnd() * 6.28,
+    });
+
+    at += BOAT.hazardGap + Math.floor(rnd() * BOAT.hazardVary);
+  }
+
+  boat.things.sort((p, q) => p.seg - q.seg);
+}
+
+/* Rocks and posts up on the banks. They do nothing but stream past, which is
+   the only honest report of how fast you are actually going. */
+function buildBanks() {
+  boat.props.length = 0;
+  const rnd = courseRng(4242);
+  for (let i = 0; i < BOAT.segments; i += 3) {
+    boat.props.push({
+      seg: i,
+      side: rnd() < 0.5 ? -1 : 1,
+      out: 0.1 + rnd() * 0.55,
+      tall: 0.4 + rnd() * 1.5,
+      kind: Math.floor(rnd() * 3),
+    });
+  }
+}
+
+/* Where a raft is in its cycle. Same three-phase shape the crossing rows use,
+   so the warning means the same thing here as it does there. */
+function turtleState(t) {
+  const cycle = BOAT.turtleDown + BOAT.turtleRising + BOAT.turtleUp;
+  const at = (game.time + t.phase * 2) % cycle;
+  if (at < BOAT.turtleDown) return 'down';
+  if (at < BOAT.turtleDown + BOAT.turtleRising) return 'rising';
+  return 'up';
+}
+
+function turtleUp(t) {
+  return turtleState(t) === 'up';
+}
+
+function thingSolid(t) {
+  if (t.dead) return false;
+  if (t.kind === 'buoy') return false;
+  if (t.kind === 'turtle') return turtleUp(t);
+  return true;
+}
 
 /* --- the projection ------------------------------------------------------ */
 
@@ -2053,67 +2211,91 @@ function boatBottomY() {
   return HEIGHT - GRID;
 }
 
-/* One function, used for every single thing in the scene. Scale is 1 right at
-   the camera and falls away towards nothing at the horizon, which is what
-   makes the far bank narrow and a near mine enormous. */
+/* Distance ahead to a screen row and a scale. Scale is 1 at the bow and falls
+   away to nothing at the horizon, which is what narrows the far bank. */
 function boatProject(z) {
   const scale = BOAT.camera / (Math.max(0, z) + BOAT.camera);
   const hy = boatHorizonY();
   return { scale, y: hy + (boatBottomY() - hy) * scale };
 }
 
-/* Where a point across the river lands on screen at that distance. */
-function boatScreenX(x, scale) {
-  return WIDTH / 2 + x * scale * (WIDTH / 2) * BOAT.spread;
+/* Where a point across the river lands, given that segment's scale and how
+   far the river has drifted sideways by the time it gets out there. */
+function boatScreenX(x, scale, drift) {
+  return WIDTH / 2 + (x - boat.x + (drift || 0)) * scale * (WIDTH / 2) * BOAT.spread;
 }
 
-/* Rocks and posts along both banks. They do nothing except stream past you,
-   which is the only thing that tells you how fast you are actually going once
-   the water bands get small. */
-function buildGorge() {
-  boat.props.length = 0;
-  for (let i = 0; i < BOAT.props; i++) {
-    const side = i % 2 === 0 ? -1 : 1;
-    boat.props.push({
-      side,
-      z: (i / 2) * BOAT.propSpacing + (i % 2) * BOAT.propSpacing * 0.5,
-      out: 0.06 + (i * 0.37) % 0.5,     /* how far up the bank it sits */
-      tall: 0.5 + ((i * 0.61) % 1) * 1.4,
-      kind: i % 3,
-    });
+/* The walk. Once a frame, work out where every visible segment lands, and
+   stash it on the segment so everything else can just look it up. */
+function walkCourse() {
+  const base = Math.floor(boat.pos);
+  const pct = boat.pos - base;
+
+  let drift = 0, dDrift = 0;
+  let lift = 0, dLift = 0;
+
+  for (let n = 0; n < BOAT.draw; n++) {
+    const seg = segAt(base + n);
+    const z = (n - pct) * BOAT.segLen;
+    const p = boatProject(z);
+
+    seg.scale = p.scale;
+    seg.drift = drift;
+    seg.lift  = lift;
+    seg.vx = WIDTH / 2 + (drift - boat.x) * p.scale * (WIDTH / 2) * BOAT.spread;
+    seg.vy = p.y - lift * p.scale;
+    seg.z = z;
+
+    dDrift += seg.curve;
+    drift  += dDrift;
+    dLift  += seg.hill * 0.02;
+    lift   += dLift;
   }
 }
 
-/* Which temper the boss is in. */
-function boatPhase() {
-  let out = BOAT.phases[0];
-  for (const ph of BOAT.phases) if (boat.bossHits >= ph.at) out = ph;
-  return out;
+/* Where something at a given course position lands, interpolated between the
+   two segments it sits between. */
+function thingView(segPos) {
+  const base = Math.floor(boat.pos);
+  const n = segPos - base;
+  if (n < -1 || n >= BOAT.draw - 1) return null;
+
+  const i = Math.max(0, Math.floor(n));
+  const a = segAt(base + i);
+  if (!a.scale) return null;
+  return { scale: a.scale, y: a.vy, drift: a.drift, z: a.z };
 }
 
 /* --- running it ---------------------------------------------------------- */
 
 function startBoat() {
-  boat.hull = BOAT.hull;
-  boat.fuel = BOAT.boostFuel;
-  boat.burning = false;
-  boat.hurtAt = -99;
+  buildCourse();
+
+  boat.pos = 0;
   boat.x = 0;
-  boat.z = 0;
+  boat.speed = BOAT.idle;
+  boat.spinUntil = 0;
+  boat.spins = 0;
+  boat.hurtAt = -99;
+
+  boat.bossPos = BOAT.bossGap;
   boat.bossX = 0;
-  boat.bossZ = BOAT.bossGap;
   boat.bossHits = 0;
   boat.bossPhase = 0;
-  boat.mines.length = 0;
+  boat.phase = 0;
+  /* A beat before it starts dumping things behind it. Dropping a log on the
+     first frame puts one dead ahead of you at the exact lateral you both
+     start on, which is not a mechanic, it is an ambush. */
+  boat.nextDrop = game.time + BOAT.dropEvery;
+  boat.nextShot = game.time + BOAT.dropEvery;
+  boat.sinkAt = -99;
+
   boat.shots.length = 0;
   boat.spray.length = 0;
-  boat.nextMine = 0;
-  boat.nextShot = 0;
-  boat.phase = 0;
-  boat.phaseAt = -99;
-  boat.sinkAt = -99;
-  buildGorge();
+
   boat.timeLeft = BOAT.duration;
+  boat.gateAt = 0;
+  boat.gatesMade = 0;
   boat.rams = 0;
   boat.points = 0;
   boat.won = false;
@@ -2131,63 +2313,56 @@ function finishBoat() {
   setState('boatResults');
 }
 
-/* Being hit costs hull, and buys a moment of not being hit again, or a mine
-   field would take the whole boat in one pass. */
-function hurtBoat(reason) {
+function boatPhase() {
+  let out = BOAT.phases[0];
+  for (const ph of BOAT.phases) if (boat.bossHits >= ph.at) out = ph;
+  return out;
+}
+
+/* How fast you are going, as a fraction of flat out. Used by half the feel:
+   the wash, the shake, the speedo, the field of view. */
+function boatPace() {
+  return Math.max(0, Math.min(1, (boat.speed - BOAT.idle) / (BOAT.top - BOAT.idle)));
+}
+
+/* Spin out. Costs you your speed and a second of control, which on a clock
+   that only a checkpoint can refill is the most expensive thing there is.
+   Nothing here can end the run. Only the clock can do that. */
+function spinOut(reason) {
   if (game.time - boat.hurtAt < BOAT.grace) return false;
+
   boat.hurtAt = game.time;
-  boat.hull--;
-  bonus.shake = 12;
-  bonus.flash = 0.3;
+  boat.spins++;
+  boat.speed = Math.min(boat.speed, BOAT.crashTo);
+  boat.spinUntil = game.time + BOAT.spinTime;
+
+  bonus.shake = 14;
+  bonus.flash = 0.28;
   Sound.play('mine');
   boatOutcome(reason);
-  if (boat.hull <= 0) {
-    boat.won = false;
-    finishBoat();
-  }
   return true;
 }
 
 function updateBoat(dt) {
   /* Once it is going down, everything stops except the wreck and the water.
-     Cutting straight to a tally screen made six rams feel like a spreadsheet
-     entry rather than a kill. */
+     Cutting straight to a tally made six rams feel like a spreadsheet entry. */
   if (boat.sinkAt > 0) {
-    boat.z += BOAT.cruise * 0.4 * dt;
+    boat.pos += BOAT.idle * 0.4 * dt;
     updateBoatSpray(dt);
-    if (game.time - boat.sinkAt > 2.2) finishBoat();
+    walkCourse();
+    if (game.time - boat.sinkAt > 2.4) finishBoat();
     return;
   }
 
   boat.timeLeft -= dt;
 
-  /* --- the throttle. Same deal as the rocket: it is a resource, and closing
-         on the boss is what you spend it on. --- */
-  boat.burning = held.up && boat.fuel > 0;
-  if (boat.burning) boat.fuel = Math.max(0, boat.fuel - dt);
-  else boat.fuel = Math.min(BOAT.boostFuel, boat.fuel + dt * BOAT.refill);
-
-  const speed = BOAT.cruise * (boat.burning ? BOAT.boost : 1);
-  boat.z += speed * dt;
-
-  /* --- steering --- */
-  let dx = 0;
-  if (held.left)  dx -= 1;
-  if (held.right) dx += 1;
-  boat.x += dx * BOAT.steer * dt;
-
-  const wall = BOAT.riverHalf * 0.92;
-  if (boat.x < -wall || boat.x > wall) {
-    boat.x = Math.max(-wall, Math.min(wall, boat.x));
-    if (hurtBoat('INTO THE BANK')) spawnBoatSpray(boat.x, 0.4, 10);
-  }
-
-  /* --- what temper it is in --- */
+  const spinning = game.time < boat.spinUntil;
   const ph = boatPhase();
+
+  /* --- temper --- */
   const phIdx = BOAT.phases.indexOf(ph);
   if (phIdx !== boat.phase) {
     boat.phase = phIdx;
-    boat.phaseAt = game.time;
     if (ph.label) {
       boatOutcome(ph.label);
       bonus.flash = 0.35;
@@ -2195,107 +2370,211 @@ function updateBoat(dt) {
     }
   }
 
-  /* --- the boss. It weaves across the river, and it runs harder the closer
-         you get, so the throttle is the only way to actually catch it. --- */
-  boat.bossPhase += dt * BOAT.bossWeave * ph.weave;
-  boat.bossX = Math.sin(boat.bossPhase) * BOAT.riverHalf * BOAT.bossRange;
+  /* --- throttle and brake --- */
+  if (!spinning) {
+    if (held.up)        boat.speed += BOAT.accel * dt;
+    else if (held.down) boat.speed -= BOAT.brake * dt;
+    else                boat.speed -= BOAT.drag * dt;
+  } else {
+    boat.speed -= BOAT.brake * 0.6 * dt;
+  }
+  boat.speed = Math.max(BOAT.idle * 0.35, Math.min(BOAT.top, boat.speed));
 
-  const gap = boat.bossZ;
-  const fleeing = gap < BOAT.bossGap ? (1 - gap / BOAT.bossGap) * BOAT.bossRun : 0;
-  boat.bossZ += (BOAT.cruise + fleeing - speed) * dt;
-  if (boat.bossZ > BOAT.depth * 0.8) boat.bossZ = BOAT.depth * 0.8;
+  boat.pos += boat.speed * dt;
 
-  /* --- ramming it --- */
-  if (boat.bossZ < BOAT.ramRange &&
-      Math.abs(boat.bossX - boat.x) < BOAT.mineHalf * 2.4) {
-    boat.bossHits++;
-    boat.rams++;
-    boat.points += BOAT.points.ram;
-    addScore(BOAT.points.ram, 'RAM +' + BOAT.points.ram);
-    Sound.play('ram');
-    bonus.shake = 16;
-    bonus.flash = 0.4;
-    spawnBoatSpray(boat.bossX, 0.6, 16);
-    boat.bossZ = BOAT.bossGap;
-    boatOutcome(boat.bossHits >= BOAT.bossHits ? 'SUNK IT' : 'DIRECT HIT');
+  /* --- steering, and the bend trying to put you in the bank ---
+     This is the level. The faster you take a bend the harder it throws you at
+     the outside, so speed has a price and the line you take is a real skill. */
+  const here = segAt(Math.floor(boat.pos));
+  const pace = boatPace();
 
-    if (boat.bossHits >= BOAT.bossHits) {
-      boat.won = true;
-      boat.points += BOAT.points.win;
-      addScore(BOAT.points.win, 'BOSS DOWN');
-      boat.sinkAt = game.time;
-      boat.mines.length = 0;
-      boat.shots.length = 0;
-      bonus.shake = 26;
-      bonus.flash = 0.85;
-      Sound.play('explode');
-      spawnBoatSpray(boat.bossX, 0.8, 40);
-      return;                     /* it goes down first, then the tally */
+  if (!spinning) {
+    let dx = 0;
+    if (held.left)  dx -= 1;
+    if (held.right) dx += 1;
+    boat.x += dx * BOAT.steer * dt;
+  } else {
+    /* Spun out: you are a passenger for a moment. */
+    boat.x += Math.sin((boat.spinUntil - game.time) * 18) * 1.4 * dt;
+  }
+
+  /* The bend pushes you at the outside bank, harder the faster you are going.
+     It has to stay well under the steering authority or the river simply pins
+     you to the bank and there is nothing you can do about it, which is not a
+     racing line, it is a cutscene. At full curve and flat out this is about
+     six tenths of what the steering can hold. */
+  boat.x -= here.curve * (0.4 + pace) * BOAT.centrifugal * dt;
+
+  /* --- the banks --- */
+  const wall = BOAT.riverHalf * 0.95;
+  if (boat.x < -wall || boat.x > wall) {
+    boat.x = Math.max(-wall, Math.min(wall, boat.x));
+    boat.speed *= (1 - BOAT.bankPush * dt * 6);
+    if (pace > 0.25) {
+      if (spinOut('INTO THE BANK')) spawnBoatSpray(boat.x, 0.4, 14);
+    } else {
+      spawnBoatSpray(boat.x, 0.2, 2);
+      Sound.play('wake');
     }
   }
 
-  /* --- mines, dropped behind the boss --- */
-  if (game.time >= boat.nextMine) {
-    boat.nextMine = game.time + BOAT.mineEvery * ph.mine;
-    boat.mines.push({ x: boat.bossX, z: boat.bossZ, hit: false });
+  /* --- checkpoint gates --- */
+  for (const g of boat.gates) {
+    if (g.taken || boat.pos < g.seg) continue;
+    g.taken = true;
+    boat.gatesMade++;
+    boat.timeLeft = BOAT.duration;
+    boat.points += BOAT.points.gate;
+    addScore(BOAT.points.gate, 'CHECKPOINT');
+    Sound.play('star');
+    bonus.flash = 0.2;
+    boatOutcome('CHECKPOINT');
   }
 
-  /* --- and from the second temper on, it shoots back --- */
+  /* --- the boss --- */
+  boat.bossPhase += dt * BOAT.bossWeave * ph.weave;
+  boat.bossX = Math.sin(boat.bossPhase) * BOAT.riverHalf * BOAT.bossRange;
+
+  /* The boss runs at your pace, a shade under it, plus a kick when you are
+     right on its transom.
+
+     Flat speed was wrong twice over. Drive badly and it vanished up the river
+     and there was no level. Drive well and you overtook it, at which point it
+     was behind you, the ram check could never fire again, and the level was
+     also over. It now tracks you, so the chase is always a chase, and you
+     close on it by driving well rather than by holding one key. */
+  const gap = boat.bossPos - boat.pos;
+  const fleeing = gap < BOAT.bossGap ? (1 - gap / BOAT.bossGap) * BOAT.bossRun : 0;
+  const bossSpeed = Math.max(BOAT.idle * 1.2, boat.speed * BOAT.bossPace) + fleeing;
+
+  boat.bossPos += bossSpeed * dt;
+
+  /* And you cannot get past it. It is the thing in front. */
+  boat.bossPos = Math.max(boat.bossPos, boat.pos + BOAT.bossMin);
+  boat.bossPos = Math.min(boat.bossPos, boat.pos + BOAT.draw * 0.55);
+
+  if (boat.bossPos - boat.pos <= BOAT.ramRange &&
+      Math.abs(boat.bossX - boat.x) < BOAT.ramWidth) {
+    ramBoss();
+    if (boat.sinkAt > 0) return;
+  }
+
+  /* --- what it drops, and what it fires --- */
+  if (game.time >= boat.nextDrop) {
+    boat.nextDrop = game.time + BOAT.dropEvery * ph.drop;
+    /* Dropped where the boss is, not behind it. Behind it sounds right and
+       plays terribly: at flat out you get a fifth of a second to react, which
+       is not a dodge, it is a coin toss. Dropping it at the boss gives you the
+       whole gap between you to see it and move. */
+    const alive = boat.things.filter((t) => t.dropped && !t.dead).length;
+    if (alive < BOAT.maxDropped) {
+      boat.things.push({
+        seg: boat.bossPos, kind: 'log', x: boat.bossX,
+        half: 0.30, dead: false, phase: 0, dropped: true,
+      });
+    }
+    spawnBoatSpray(boat.bossX, boat.bossPos - boat.pos, 6);
+    Sound.play('wake');
+  }
+
   if (ph.shootEvery > 0 && game.time >= boat.nextShot) {
     boat.nextShot = game.time + ph.shootEvery;
-    boat.shots.push({ x: boat.bossX, z: boat.bossZ, hit: false });
+    boat.shots.push({ pos: boat.bossPos, x: boat.bossX, hit: false });
     Sound.play('shot');
   }
 
   for (let i = boat.shots.length - 1; i >= 0; i--) {
     const sh = boat.shots[i];
-    /* A shot comes at you under its own steam as well as the closing speed. */
-    sh.z -= (speed + BOAT.shotSpeed) * dt;
-
-    if (sh.z < -1.2) { boat.shots.splice(i, 1); continue; }
+    sh.pos -= BOAT.shotSpeed * dt;
+    if (sh.pos < boat.pos - 2) { boat.shots.splice(i, 1); continue; }
     if (sh.hit) continue;
 
-    if (sh.z < 0.5 && sh.z > -0.4 && Math.abs(sh.x - boat.x) < BOAT.shotHalf * 2.6) {
+    if (Math.abs(sh.pos - boat.pos) < 0.6 && Math.abs(sh.x - boat.x) < 0.28) {
       sh.hit = true;
-      if (hurtBoat('HIT')) spawnBoatSpray(sh.x, 0.25, 12);
+      if (spinOut('HIT')) spawnBoatSpray(sh.x, 0.25, 12);
     }
   }
 
-  for (let i = boat.mines.length - 1; i >= 0; i--) {
-    const m = boat.mines[i];
-    /* Mines sit still in the water. We are the ones moving. */
-    m.z -= speed * dt;
+  /* --- clear out what is behind us ---
+     The boss drops a log every couple of seconds and they were never cleaned
+     up, so over a minute the river quietly filled with two dozen of them, at
+     every lateral the boss had weaved through, until there was no line left
+     anywhere. The course's own furniture stays (it is the course), but
+     anything dropped is gone once it is behind you. */
+  if (boat.things.length > BOAT.maxThings) {
+    boat.things = boat.things.filter(
+      (t) => !t.dropped || t.seg > boat.pos - 3
+    );
+  }
+  for (let i = boat.things.length - 1; i >= 0; i--) {
+    const t = boat.things[i];
+    if (t.dropped && t.seg < boat.pos - 6) boat.things.splice(i, 1);
+  }
 
-    if (m.z < -1.5) { boat.mines.splice(i, 1); continue; }
-    if (m.hit) continue;
+  /* --- hitting the furniture --- */
+  for (const t of boat.things) {
+    if (!thingSolid(t)) continue;
+    const d = t.seg - boat.pos;
+    if (d > 0.7 || d < -0.7) continue;
+    if (Math.abs(t.x - boat.x) > t.half + 0.16) continue;
 
-    if (m.z < 0.5 && m.z > -0.4 && Math.abs(m.x - boat.x) < BOAT.mineHalf * 2) {
-      m.hit = true;
-      if (hurtBoat('MINE')) spawnBoatSpray(m.x, 0.3, 14);
-    }
+    t.dead = true;
+    const what = t.kind === 'croc' ? 'CROCODILE' : t.kind === 'turtle' ? 'TURTLES' : 'LOG';
+    if (spinOut(what)) spawnBoatSpray(t.x, 0.3, 16);
+  }
+
+  /* --- the wash --- */
+  if (pace > 0.15 && Math.random() < pace * 0.9) {
+    spawnBoatSpray(boat.x + (Math.random() - 0.5) * 0.35, 0.05, 1);
   }
 
   updateBoatSpray(dt);
+  walkCourse();
 
   if (boat.timeLeft <= 0) {
     boat.timeLeft = 0;
     boat.won = false;
-    boatOutcome('IT GOT AWAY');
+    boatOutcome('THE RIVER RAN OUT');
     finishBoat();
   }
 }
 
-/* Water thrown up by a hit, in world coordinates so it shrinks with distance
-   like everything else does. */
-function spawnBoatSpray(x, z, count) {
+function ramBoss() {
+  boat.bossHits++;
+  boat.rams++;
+  boat.points += BOAT.points.ram;
+  addScore(BOAT.points.ram, 'RAM +' + BOAT.points.ram);
+  Sound.play('ram');
+  bonus.shake = 18;
+  bonus.flash = 0.4;
+  spawnBoatSpray(boat.bossX, 0.6, 18);
+  boat.bossPos = boat.pos + BOAT.bossGap;
+
+  if (boat.bossHits >= BOAT.bossHits) {
+    boat.won = true;
+    boat.points += BOAT.points.win;
+    addScore(BOAT.points.win, 'BOSS DOWN');
+    boat.sinkAt = game.time;
+    boat.shots.length = 0;
+    bonus.shake = 28;
+    bonus.flash = 0.85;
+    Sound.play('explode');
+    spawnBoatSpray(boat.bossX, 0.8, 44);
+    return;
+  }
+  boatOutcome('DIRECT HIT');
+}
+
+/* Water thrown up, in course coordinates so it shrinks with distance. */
+function spawnBoatSpray(x, ahead, count) {
   for (let i = 0; i < count; i++) {
     boat.spray.push({
-      x, z,
-      vx: (Math.random() - 0.5) * 1.6,
-      vz: (Math.random() - 0.2) * 1.4,
+      x, pos: boat.pos + ahead,
+      vx: (Math.random() - 0.5) * 1.3,
+      vp: (Math.random() - 0.2) * 1.1,
       rise: 8 + Math.random() * 26,
       up: 0,
-      life: 0.4 + Math.random() * 0.4,
+      life: 0.35 + Math.random() * 0.4,
       age: 0,
     });
   }
@@ -2307,7 +2586,7 @@ function updateBoatSpray(dt) {
     p.age += dt;
     if (p.age >= p.life) { boat.spray.splice(i, 1); continue; }
     p.x += p.vx * dt;
-    p.z += p.vz * dt;
+    p.pos += p.vp * dt;
     p.up += (p.rise - p.up * 6) * dt;
   }
 }
@@ -2315,259 +2594,345 @@ function updateBoatSpray(dt) {
 /* --- drawing ------------------------------------------------------------- */
 
 function drawBoat() {
+  if (!boat.segs.length) buildCourse();
+  if (!segAt(Math.floor(boat.pos)).scale) walkCourse();
+
   const hy = boatHorizonY();
   const by = boatBottomY();
+  const base = Math.floor(boat.pos);
 
-  /* Sky, then the water, both flat. The shapes on top do the work. */
-  ctx.fillStyle = Art.color('bayInner');
+  /* Sky. A band of sunset above the rim, because the gorge deserves one. */
+  const sky = ctx.createLinearGradient(0, GRID, 0, hy);
+  sky.addColorStop(0, Art.color('bayInner'));
+  sky.addColorStop(0.72, '#5a2a4e');
+  sky.addColorStop(1, '#c8583a');
+  ctx.fillStyle = sky;
   ctx.fillRect(0, GRID, WIDTH, hy - GRID);
-  ctx.fillStyle = Art.color('water');
+
+  /* Everything below the skyline starts as bank, and the water is laid on
+     top of it. That way the banks are whatever is left, however the river
+     bends, with no second polygon to keep in step. */
+  ctx.fillStyle = Art.color('grass');
   ctx.fillRect(0, hy, WIDTH, by - hy);
 
-  /* Bands of slightly lighter water sliding towards you. This is the only
-     thing that tells you how fast you are going, so it matters more than it
-     looks like it should. */
-  const band = 2.0;
-  const phase = boat.z % band;
-  for (let n = 0; n < 26; n++) {
-    const z0 = n * band - phase;
-    const z1 = z0 + band * 0.5;
-    if (z1 < 0) continue;
-    const a = boatProject(Math.max(0, z0));
-    const b = boatProject(Math.max(0, z1));
-    if (a.y - b.y < 0.6) continue;
-    ctx.fillStyle = 'rgba(255,255,255,0.055)';
-    ctx.fillRect(0, b.y, WIDTH, a.y - b.y);
+  /* --- the ribbon --- */
+  for (let n = BOAT.draw - 2; n >= 0; n--) {
+    const a = segAt(base + n);
+    const b = segAt(base + n + 1);
+    if (!a.scale || !b.scale) continue;
+    if (a.vy <= b.vy) continue;                 /* over a crest, nothing to draw */
+
+    /* Alternating shade, keyed to the segment's own index so the bands travel
+       towards you instead of crawling. This is what tells you your speed. */
+    const dark = (Math.floor((base + n) / 3) % 2) === 0;
+
+    const aL = boatScreenX(-BOAT.riverHalf, a.scale, a.drift);
+    const aR = boatScreenX( BOAT.riverHalf, a.scale, a.drift);
+    const bL = boatScreenX(-BOAT.riverHalf, b.scale, b.drift);
+    const bR = boatScreenX( BOAT.riverHalf, b.scale, b.drift);
+
+    /* The bank, a little wider than the water, so there is a lip to it. */
+    const lip = GRID * 0.5;
+    ctx.fillStyle = dark ? '#4a2f22' : '#573828';
+    quad(ctx, aL - lip * a.scale, a.vy, aR + lip * a.scale, a.vy,
+              bR + lip * b.scale, b.vy, bL - lip * b.scale, b.vy);
+
+    ctx.fillStyle = dark ? Art.color('water') : shade(Art.color('water'), 1.16);
+    quad(ctx, aL, a.vy, aR, a.vy, bR, b.vy, bL, b.vy);
+
+    /* Rumble strip along the waterline, which is the oldest speed cue there
+       is and reads even when the water bands get small. */
+    if (dark) {
+      const w = Math.max(1, 4 * a.scale);
+      ctx.fillStyle = '#ffb060';
+      quad(ctx, aL - w, a.vy, aL, a.vy, bL, b.vy, bL - w, b.vy);
+      quad(ctx, aR, a.vy, aR + w, a.vy, bR + w, b.vy, bR, b.vy);
+    }
   }
 
-  /* The banks, as two wedges narrowing to the horizon. */
-  const near = boatProject(0);
-  const far  = boatProject(BOAT.depth);
-  ctx.fillStyle = Art.color('grass');
-  for (const side of [-1, 1]) {
-    ctx.beginPath();
-    ctx.moveTo(boatScreenX(side * BOAT.riverHalf, near.scale), near.y);
-    ctx.lineTo(boatScreenX(side * BOAT.riverHalf, far.scale), far.y);
-    ctx.lineTo(side < 0 ? 0 : WIDTH, far.y);
-    ctx.lineTo(side < 0 ? 0 : WIDTH, by);
-    ctx.lineTo(boatScreenX(side * BOAT.riverHalf, near.scale), by);
-    ctx.closePath();
-    ctx.fill();
-  }
+  /* --- everything in and beside the river, furthest first --- */
+  const drawables = [];
 
-  ctx.strokeStyle = Art.color('bankLine');
-  ctx.lineWidth = 2;
-  for (const side of [-1, 1]) {
-    ctx.beginPath();
-    ctx.moveTo(boatScreenX(side * BOAT.riverHalf, near.scale), near.y);
-    ctx.lineTo(boatScreenX(side * BOAT.riverHalf, far.scale), far.y);
-    ctx.stroke();
-  }
-
-  /* Everything in the world, furthest first so near things cover far ones.
-     The banks go in the same list as the water, or a rock on the near bank
-     draws behind a mine that is well past it. */
-  const things = [];
-
-  const span = BOAT.props * BOAT.propSpacing * 0.5;
   for (const pr of boat.props) {
-    /* Wrap them round so the gorge never runs out. */
-    let z = pr.z - (boat.z % span);
-    if (z < -1) z += span;
-    things.push({ z, draw: () => drawGorgeProp(pr, z) });
+    const near = pr.seg - base;
+    const wrapped = near < -2 ? pr.seg + BOAT.segments : pr.seg;
+    if (wrapped - base > BOAT.draw - 2 || wrapped - base < -1) continue;
+    drawables.push({ at: wrapped, go: () => drawBankProp(pr, wrapped) });
   }
 
-  for (const m of boat.mines) if (!m.hit) things.push({ z: m.z, draw: () => drawMine(m) });
-  for (const sh of boat.shots) if (!sh.hit) things.push({ z: sh.z, draw: () => drawBossShot(sh) });
-  if (boat.sinkAt < 0) things.push({ z: boat.bossZ, draw: drawBossBoat });
-  else things.push({ z: boat.bossZ, draw: drawSinkingBoss });
+  for (const g of boat.gates) {
+    const w = g.seg - base < -2 ? g.seg + BOAT.segments : g.seg;
+    if (w - base > BOAT.draw - 2 || w - base < -1) continue;
+    drawables.push({ at: w, go: () => drawGate(g, w) });
+  }
 
-  things.sort((p, q) => q.z - p.z);
-  for (const t of things) if (t.z > -1) t.draw();
+  for (const t of boat.things) {
+    const w = t.seg - base < -2 ? t.seg + BOAT.segments : t.seg;
+    if (w - base > BOAT.draw - 2 || w - base < -1) continue;
+    drawables.push({ at: w, go: () => drawThing(t, w) });
+  }
+
+  for (const sh of boat.shots) {
+    if (sh.hit) continue;
+    drawables.push({ at: sh.pos, go: () => drawBossShot(sh) });
+  }
+
+  drawables.push({
+    at: boat.bossPos,
+    go: boat.sinkAt > 0 ? drawSinkingBoss : drawBossBoat,
+  });
+
+  drawables.sort((p, q) => q.at - p.at);
+  for (const d of drawables) d.go();
 
   drawBoatSpray();
   drawOwnBoat();
 }
 
-/* A rock or a post on the bank. Purely scenery, and the only honest report of
-   how fast you are moving once the water bands get small. */
-function drawGorgeProp(pr, z) {
-  const p = boatProject(z);
-  if (p.scale <= 0.012) return;
+/* A flat quad. Four points, one fill, used for every piece of the ribbon. */
+function quad(c, x1, y1, x2, y2, x3, y3, x4, y4) {
+  c.beginPath();
+  c.moveTo(x1, y1);
+  c.lineTo(x2, y2);
+  c.lineTo(x3, y3);
+  c.lineTo(x4, y4);
+  c.closePath();
+  c.fill();
+}
 
-  const x = boatScreenX(pr.side * (BOAT.riverHalf + pr.out), p.scale);
-  const w = Math.max(1.5, p.scale * GRID * (pr.kind === 1 ? 0.5 : 0.9));
-  const h = Math.max(2, p.scale * GRID * pr.tall * (pr.kind === 1 ? 2.2 : 1.0));
+/* Lighten or darken a hex colour, for the alternating water bands. */
+function shade(hex, by) {
+  const n = parseInt((hex || '#000000').slice(1), 16);
+  const f = (v) => Math.max(0, Math.min(255, Math.round(v * by)));
+  return `rgb(${f((n >> 16) & 255)},${f((n >> 8) & 255)},${f(n & 255)})`;
+}
+
+function drawBankProp(pr, at) {
+  const v = thingView(at);
+  if (!v || v.scale <= 0.014) return;
+
+  const x = boatScreenX(pr.side * (BOAT.riverHalf + 0.25 + pr.out), v.scale, v.drift);
+  const w = Math.max(1.5, v.scale * GRID * (pr.kind === 1 ? 0.45 : 0.95));
+  const h = Math.max(2, v.scale * GRID * pr.tall * (pr.kind === 1 ? 2.4 : 1.0));
 
   if (pr.kind === 1) {
-    /* A mooring post, with a bit of a lean. */
     ctx.fillStyle = '#3a2a1e';
-    ctx.fillRect(x - w / 2, p.y - h, w, h);
+    ctx.fillRect(x - w / 2, v.y - h, w, h);
     ctx.fillStyle = '#5a4230';
-    ctx.fillRect(x - w / 2, p.y - h, w * 0.45, h);
+    ctx.fillRect(x - w / 2, v.y - h, w * 0.4, h);
   } else {
-    /* A rock. */
-    ctx.fillStyle = pr.kind === 0 ? '#4a3a30' : '#38302c';
+    ctx.fillStyle = pr.kind === 0 ? '#5a4234' : '#3e3128';
     ctx.beginPath();
-    ctx.moveTo(x - w / 2, p.y);
-    ctx.lineTo(x - w * 0.28, p.y - h);
-    ctx.lineTo(x + w * 0.22, p.y - h * 0.82);
-    ctx.lineTo(x + w / 2, p.y);
+    ctx.moveTo(x - w / 2, v.y);
+    ctx.lineTo(x - w * 0.26, v.y - h);
+    ctx.lineTo(x + w * 0.24, v.y - h * 0.8);
+    ctx.lineTo(x + w / 2, v.y);
     ctx.closePath();
     ctx.fill();
   }
 }
 
-/* Something the boss threw at you, coming down the river. */
-function drawBossShot(sh) {
-  const p = boatProject(sh.z);
-  if (p.scale <= 0.01) return;
+/* A checkpoint: two posts and a banner across the river. */
+function drawGate(g, at) {
+  const v = thingView(at);
+  if (!v || v.scale <= 0.012) return;
 
-  const x = boatScreenX(sh.x, p.scale);
-  const r = Math.max(1.5, BOAT.shotHalf * p.scale * (WIDTH / 2) * BOAT.spread);
+  const l = boatScreenX(-BOAT.riverHalf * 1.02, v.scale, v.drift);
+  const r = boatScreenX( BOAT.riverHalf * 1.02, v.scale, v.drift);
+  const h = Math.max(6, v.scale * GRID * 2.6);
+  const w = Math.max(2, v.scale * GRID * 0.24);
+
+  const lit = !g.taken;
+  ctx.fillStyle = lit ? '#ffd84a' : '#4a4a52';
+  ctx.fillRect(l - w / 2, v.y - h, w, h);
+  ctx.fillRect(r - w / 2, v.y - h, w, h);
+
+  ctx.fillStyle = lit
+    ? (Math.floor(game.time * 6) % 2 ? '#ffd84a' : '#ff8a3c')
+    : '#3a3a42';
+  ctx.fillRect(l, v.y - h, r - l, Math.max(2, h * 0.16));
+}
+
+function drawThing(t, at) {
+  const v = thingView(at);
+  if (!v || v.scale <= 0.012) return;
+  if (t.dead && t.kind !== 'buoy') return;
+
+  const x = boatScreenX(t.x, v.scale, v.drift);
+  const unit = v.scale * (WIDTH / 2) * BOAT.spread;
+
+  if (t.kind === 'buoy') {
+    const r = Math.max(1.5, 0.06 * unit);
+    const bob = Math.sin(game.time * 2.4 + t.phase) * r * 0.5;
+    ctx.fillStyle = t.x < 0 ? '#ff4a4a' : '#4aff8a';
+    ctx.beginPath();
+    ctx.moveTo(x, v.y - r * 2.6 + bob);
+    ctx.lineTo(x + r, v.y + bob);
+    ctx.lineTo(x - r, v.y + bob);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - r, v.y + bob - r * 0.3, r * 2, Math.max(1, r * 0.4));
+    return;
+  }
+
+  if (t.kind === 'turtle') {
+    const st = turtleState(t);
+    if (st === 'down') {
+      /* Bubbles where it went under, so the gap closing is something you can
+         read rather than something that happens to you. */
+      const r = Math.max(1, 0.05 * unit);
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = '#bfe4ff';
+      for (let i = 0; i < 3; i++) {
+        const a = game.time * 2 + i * 2;
+        ctx.beginPath();
+        ctx.arc(x + Math.sin(a) * r * 2, v.y - (a % 1) * r * 3, r * 0.6, 0, 6.3);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+    /* Surfacing: half out of the water, and not yet solid. */
+    if (st === 'rising') ctx.globalAlpha = 0.55;
+  }
+
+  const w = Math.max(3, t.half * 2 * unit);
+  const h = Math.max(2, w * (t.kind === 'log' ? 0.30 : 0.42));
+  const art = t.kind === 'croc' ? 'gator' : t.kind === 'turtle' ? 'turtle' : 'log';
+
+  /* A shadow on the water first, so it is floating on the river rather than
+     stuck to the screen. */
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#000000';
+  ctx.beginPath();
+  ctx.ellipse(x, v.y + h * 0.32, w * 0.55, h * 0.28, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  drawArt(ctx, Art.of(art), x - w / 2, v.y - h * 0.7, w, h,
+          { cells: Math.max(1, Math.round(w / Math.max(1, h))), time: game.time, dir: 1 });
+  ctx.globalAlpha = 1;
+}
+
+function drawBossShot(sh) {
+  const v = thingView(sh.pos);
+  if (!v || v.scale <= 0.01) return;
+
+  const x = boatScreenX(sh.x, v.scale, v.drift);
+  const r = Math.max(1.5, 0.09 * v.scale * (WIDTH / 2) * BOAT.spread);
 
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  const g = ctx.createRadialGradient(x, p.y, 0, x, p.y, r * 2.4);
-  g.addColorStop(0, 'rgba(255,220,120,0.95)');
+  const g = ctx.createRadialGradient(x, v.y, 0, x, v.y, r * 2.6);
+  g.addColorStop(0, 'rgba(255,225,140,0.95)');
   g.addColorStop(0.4, 'rgba(255,120,40,0.55)');
   g.addColorStop(1, 'rgba(255,60,0,0)');
   ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(x, p.y, r * 2.4, 0, Math.PI * 2);
+  ctx.arc(x, v.y, r * 2.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
   ctx.fillStyle = '#fff6d0';
   ctx.beginPath();
-  ctx.arc(x, p.y, r, 0, Math.PI * 2);
+  ctx.arc(x, v.y, r, 0, Math.PI * 2);
   ctx.fill();
 }
 
-/* The boss going down. Six rams deserves more than a cut to a tally. */
+function drawBossBoat() {
+  const v = thingView(boat.bossPos);
+  if (!v || v.scale <= 0.01) return;
+
+  const w = Math.max(5, v.scale * GRID * 3.8);
+  const x = boatScreenX(boat.bossX, v.scale, v.drift);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.24)';
+  ctx.fillRect(x - w * 0.4, v.y + w * 0.16, w * 0.8, Math.max(1, w * 0.09));
+
+  drawArt(ctx, Art.of('boat'), x - w / 2, v.y - w * 0.34, w, w * 0.68,
+          { cells: 1, time: game.time, dir: 1 });
+
+  const left = 1 - boat.bossHits / BOAT.bossHits;
+  const bw = w * 1.05, bh = Math.max(2, w * 0.1);
+  const bx = x - bw / 2, by = v.y - w * 0.55;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+  ctx.fillStyle = left > 0.35 ? '#ff5a3c' : '#ffd84a';
+  ctx.fillRect(bx, by, bw * Math.max(0, left), bh);
+}
+
 function drawSinkingBoss() {
-  const t = Math.min(1, (game.time - boat.sinkAt) / 2.2);
-  const p = boatProject(boat.bossZ);
-  if (p.scale <= 0.01) return;
+  const t = Math.min(1, (game.time - boat.sinkAt) / 2.4);
+  const v = thingView(boat.bossPos);
+  if (!v || v.scale <= 0.01) return;
 
-  const w = Math.max(4, p.scale * GRID * 3.6);
-  const x = boatScreenX(boat.bossX, p.scale);
+  const w = Math.max(5, v.scale * GRID * 3.8);
+  const x = boatScreenX(boat.bossX, v.scale, v.drift);
 
-  /* Rolling over as it settles. */
   ctx.save();
-  ctx.translate(x, p.y + t * w * 0.4);
-  ctx.rotate(t * 0.9);
+  ctx.translate(x, v.y + t * w * 0.4);
+  ctx.rotate(t * 1.1);
   ctx.globalAlpha = 1 - t * 0.85;
   drawArt(ctx, Art.of('boat'), -w / 2, -w * 0.34, w, w * 0.68,
           { cells: 1, time: game.time, dir: 1 });
   ctx.restore();
 
-  /* Fire on the water for the first half, then just steam. */
-  if (t < 0.65) {
+  if (t < 0.7) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const r = w * (0.7 + t * 1.8);
-    const g = ctx.createRadialGradient(x, p.y, 0, x, p.y, r);
-    g.addColorStop(0, `rgba(255,240,180,${0.9 * (1 - t / 0.65)})`);
-    g.addColorStop(0.4, `rgba(255,140,40,${0.6 * (1 - t / 0.65)})`);
+    const r = w * (0.7 + t * 2.2);
+    const g = ctx.createRadialGradient(x, v.y, 0, x, v.y, r);
+    const fade = 1 - t / 0.7;
+    g.addColorStop(0, `rgba(255,240,180,${0.9 * fade})`);
+    g.addColorStop(0.4, `rgba(255,140,40,${0.6 * fade})`);
     g.addColorStop(1, 'rgba(255,60,0,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(x, p.y, r, 0, Math.PI * 2);
+    ctx.arc(x, v.y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
 }
 
-function drawMine(m) {
-  const p = boatProject(m.z);
-  if (p.scale <= 0.01) return;
-
-  const x = boatScreenX(m.x, p.scale);
-  const r = Math.max(1.5, BOAT.mineHalf * p.scale * (WIDTH / 2) * BOAT.spread);
-  const bob = Math.sin(game.time * 3 + m.x * 7) * r * 0.14;
-
-  /* Spikes, then the body, so the spikes read as sticking out of it. */
-  ctx.strokeStyle = '#2a2a32';
-  ctx.lineWidth = Math.max(1, r * 0.22);
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2 + game.time * 0.4;
-    ctx.beginPath();
-    ctx.moveTo(x + Math.cos(a) * r * 0.7, p.y + bob + Math.sin(a) * r * 0.7);
-    ctx.lineTo(x + Math.cos(a) * r * 1.25, p.y + bob + Math.sin(a) * r * 1.25);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = '#14141c';
-  ctx.beginPath();
-  ctx.arc(x, p.y + bob, r, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = '#ff4040';
-  ctx.beginPath();
-  ctx.arc(x - r * 0.3, p.y + bob - r * 0.3, r * 0.26, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawBossBoat() {
-  const p = boatProject(boat.bossZ);
-  if (p.scale <= 0.01) return;
-
-  const w = Math.max(4, p.scale * GRID * 3.6);
-  const x = boatScreenX(boat.bossX, p.scale) - w / 2;
-
-  /* Its wake, so it reads as moving away rather than parked. */
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
-  ctx.fillRect(x + w * 0.1, p.y + w * 0.16, w * 0.8, Math.max(1, w * 0.09));
-
-  drawArt(ctx, Art.of('boat'), x, p.y - w * 0.34, w, w * 0.68,
-          { cells: 1, time: game.time, dir: 1 });
-
-  /* How much fight it has left, on a bar over its head, because looking at the
-     HUD means looking away from the river. */
-  const left = 1 - boat.bossHits / BOAT.bossHits;
-  const bw = w * 1.05;
-  const bh = Math.max(2, w * 0.1);
-  const bx = boatScreenX(boat.bossX, p.scale) - bw / 2;
-  const by2 = p.y - w * 0.55;
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(bx - 1, by2 - 1, bw + 2, bh + 2);
-  ctx.fillStyle = left > 0.35 ? '#ff5a3c' : '#ffd84a';
-  ctx.fillRect(bx, by2, bw * Math.max(0, left), bh);
-}
-
 function drawBoatSpray() {
   for (const p of boat.spray) {
-    const pr = boatProject(Math.max(0, p.z));
-    if (pr.scale <= 0.01) continue;
+    const v = thingView(p.pos);
+    if (!v || v.scale <= 0.01) continue;
     const t = p.age / p.life;
     ctx.globalAlpha = 1 - t;
     ctx.fillStyle = '#dff4ff';
-    const s = Math.max(1, pr.scale * 7 * (1 - t * 0.4));
-    ctx.fillRect(boatScreenX(p.x, pr.scale) - s / 2, pr.y - p.up - s / 2, s, s);
+    const s = Math.max(1, v.scale * 8 * (1 - t * 0.4));
+    ctx.fillRect(boatScreenX(p.x, v.scale, v.drift) - s / 2, v.y - p.up - s / 2, s, s);
   }
   ctx.globalAlpha = 1;
 }
 
-/* Your own bow, in the bottom corner of the screen, drawn rather than
-   sprited because it is the one thing that never changes size. */
+/* Your own boat, with froggy driving it. Drawn rather than sprited because it
+   is the one thing on screen that never changes size. */
 function drawOwnBoat() {
   const by = boatBottomY();
-  const p = boatProject(0);
-  const x = boatScreenX(boat.x, p.scale);
-  const w = GRID * 2.2;
-  const h = GRID * 0.9;
-  const lean = boat.x * -0.12;
+  const pace = boatPace();
+  const spinning = game.time < boat.spinUntil;
 
-  /* The wash off the back, which is also the throttle telling on you. */
-  const wash = boat.burning ? 1 : 0.45;
-  ctx.globalAlpha = 0.5 * wash;
+  const x = WIDTH / 2;
+  const w = GRID * 2.3;
+  const h = GRID * 0.95;
+
+  /* It leans into the steering and against the bend, which is most of what
+     sells the cornering. */
+  const here = segAt(Math.floor(boat.pos));
+  let lean = (held.left ? -0.10 : 0) + (held.right ? 0.10 : 0) - here.curve * 3.2;
+  if (spinning) lean = Math.sin(game.time * 22) * 0.5;
+
+  /* The wash. Grows with speed, which is the cheapest and best speed cue. */
+  ctx.globalAlpha = 0.35 + pace * 0.4;
   ctx.fillStyle = '#ffffff';
-  for (let i = 0; i < 7; i++) {
-    const t = (game.time * (boat.burning ? 5 : 2.6) + i * 0.5) % 1;
-    const ww = w * (0.35 + t * 0.9);
-    ctx.fillRect(x - ww / 2, by - h * 0.1 + t * GRID * 0.5,
-                 ww, Math.max(1, 3 * (1 - t)));
+  for (let i = 0; i < 8; i++) {
+    const t = (game.time * (2.5 + pace * 7) + i * 0.42) % 1;
+    const ww = w * (0.3 + t * (1 + pace));
+    ctx.fillRect(x - ww / 2, by - h * 0.05 + t * GRID * 0.6,
+                 ww, Math.max(1, 3.5 * (1 - t)));
   }
   ctx.globalAlpha = 1;
 
@@ -2575,27 +2940,24 @@ function drawOwnBoat() {
   ctx.translate(x, by);
   ctx.rotate(lean);
 
-  /* Hull. */
   ctx.fillStyle = '#e8ecf4';
   ctx.beginPath();
   ctx.moveTo(-w / 2, h * 0.5);
-  ctx.lineTo(-w * 0.34, -h * 0.5);
-  ctx.lineTo(w * 0.34, -h * 0.5);
+  ctx.lineTo(-w * 0.33, -h * 0.5);
+  ctx.lineTo(w * 0.33, -h * 0.5);
   ctx.lineTo(w / 2, h * 0.5);
   ctx.closePath();
   ctx.fill();
 
   ctx.fillStyle = '#2a3550';
-  ctx.fillRect(-w * 0.22, -h * 0.42, w * 0.44, h * 0.36);
+  ctx.fillRect(-w * 0.24, -h * 0.44, w * 0.48, h * 0.34);
 
-  /* Froggy is driving. He is the reason any of this is happening. */
-  const fs = GRID * 0.82;
-  drawArt(ctx, Art.of('frog'), -fs / 2, -h * 0.52 - fs * 0.42, fs, fs,
+  const fs = GRID * 0.86;
+  drawArt(ctx, Art.of('frog'), -fs / 2, -h * 0.52 - fs * 0.44, fs, fs,
           { cells: 1, time: game.time });
 
-  /* A flash of red while you are still in the grace period after a hit. */
   if (game.time - boat.hurtAt < BOAT.grace && Math.floor(game.time * 12) % 2) {
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.45;
     ctx.fillStyle = '#ff4040';
     ctx.fillRect(-w / 2, -h * 0.5, w, h);
     ctx.globalAlpha = 1;
@@ -2613,10 +2975,10 @@ function drawBoatHud() {
   ctx.textAlign = 'left';
   ctx.fillStyle = Art.color('textDim');
   ctx.font = font(GRID * 0.28);
-  ctx.fillText('HULL', 10, y + GRID * 0.3);
-  ctx.fillStyle = boat.hull <= 1 ? '#ff5a5a' : '#fff';
+  ctx.fillText('GATE', 10, y + GRID * 0.3);
+  ctx.fillStyle = '#fff';
   ctx.font = font(GRID * 0.38);
-  ctx.fillText('#'.repeat(Math.max(0, boat.hull)), 10, y + GRID * 0.7);
+  ctx.fillText(String(boat.gatesMade), 10, y + GRID * 0.7);
 
   ctx.textAlign = 'center';
   ctx.fillStyle = Art.color('textDim');
@@ -2630,27 +2992,27 @@ function drawBoatHud() {
   ctx.fillStyle = Art.color('textDim');
   ctx.font = font(GRID * 0.28);
   ctx.fillText('TIME', WIDTH - 10, y + GRID * 0.3);
-  ctx.fillStyle = boat.timeLeft < 15 ? '#ff5a5a' : '#fff';
+  ctx.fillStyle = boat.timeLeft < 8 ? '#ff5a5a' : '#fff';
   ctx.font = font(GRID * 0.38);
   ctx.fillText(String(Math.ceil(boat.timeLeft)), WIDTH - 10, y + GRID * 0.7);
 
-  /* The throttle gauge, in the same place and the same shape as the rocket's,
-     because it is the same thing and should not have to be learned twice. */
-  const gw = GRID * 2.6;
-  const gh = GRID * 0.16;
-  const gx = WIDTH / 2 - gw / 2;
-  const gy = y - GRID * 0.34;
-  const frac = Math.max(0, Math.min(1, boat.fuel / BOAT.boostFuel));
+  /* Speedo. Every racer has one and it is half of why they feel fast. */
+  const gw = GRID * 3.0, gh = GRID * 0.18;
+  const gx = WIDTH / 2 - gw / 2, gy = y - GRID * 0.36;
+  const pace = boatPace();
 
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(gx - 2, gy - 2, gw + 4, gh + 4);
-  ctx.fillStyle = 'rgba(255,255,255,0.16)';
+  ctx.fillStyle = 'rgba(255,255,255,0.14)';
   ctx.fillRect(gx, gy, gw, gh);
-  ctx.fillStyle = boat.burning ? '#ffd84a' : (frac < 0.25 ? '#ff6060' : '#4ad2ff');
-  ctx.fillRect(gx, gy, gw * frac, gh);
+  ctx.fillStyle = pace > 0.85 ? '#ff5a3c' : pace > 0.5 ? '#ffd84a' : '#4ad2ff';
+  ctx.fillRect(gx, gy, gw * pace, gh);
 
-  /* Which temper it is in, up on the skyline, so the level tells you it is
-     escalating rather than leaving you to notice. */
+  ctx.textAlign = 'left';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.24);
+  ctx.fillText('KN ' + Math.round(boat.speed * 2), gx + gw + 6, gy + gh / 2);
+
   const ph = boatPhase();
   if (ph.label && boat.sinkAt < 0) {
     ctx.textAlign = 'center';
@@ -2661,14 +3023,13 @@ function drawBoatHud() {
     ctx.globalAlpha = 1;
   }
 
-  /* Whatever just happened, said once, in the middle of the river. */
   if (boat.outcome && game.time - boat.outcomeAt < 1.3) {
     const age = game.time - boat.outcomeAt;
     ctx.textAlign = 'center';
     ctx.globalAlpha = Math.max(0, 1 - age / 1.3);
     ctx.fillStyle = '#fff';
-    ctx.font = font(GRID * 0.6);
-    ctx.fillText(boat.outcome, WIDTH / 2, boatHorizonY() + GRID * 1.4 - age * 20);
+    ctx.font = font(GRID * 0.62);
+    ctx.fillText(boat.outcome, WIDTH / 2, boatHorizonY() + GRID * 1.5 - age * 20);
     ctx.globalAlpha = 1;
   }
 }
@@ -4025,7 +4386,7 @@ const SPECIAL_COPY = {
   },
   boat: {
     title: 'BOSS RUN', sub: 'SPEEDBOAT CHASE', sprite: 'boat',
-    call: 'RAM IT SIX TIMES',
+    call: 'RAM IT FOUR TIMES',
     how: ['left and right to steer  ::  up for the throttle',
           'it drops mines, and it runs when you get close'],
     over: 'BOSS RUN OVER',
@@ -4129,9 +4490,9 @@ function drawBonusOverlay() {
          ['STARS',   String(Math.round(rocket.grabbed * reveal))],
          ['BONUS',   '+' + Math.round(rocket.points * reveal)]]
       : screen.kind === 'boat'
-      ? [['RAMS',    `${Math.round(boat.rams * reveal)} of ${BOAT.bossHits}`],
-         ['HULL',    `${Math.max(0, boat.hull)} left`],
-         ['BONUS',   '+' + Math.round(boat.points * reveal)]]
+      ? [['RAMS',        `${Math.round(boat.rams * reveal)} of ${BOAT.bossHits}`],
+         ['CHECKPOINTS', String(Math.round(boat.gatesMade * reveal))],
+         ['BONUS',       '+' + Math.round(boat.points * reveal)]]
       : [['DESTROYED',  String(Math.round(bonus.smashed * reveal))],
          ['BEST COMBO', 'x' + Math.round(bonus.bestCombo * reveal)],
          ['BONUS',      '+' + Math.round(bonus.points * reveal)]];
@@ -5197,8 +5558,9 @@ window.frogger = {
   hazard, twist, applyPlan, enterLevel, buildObstacles, trafficRows,
   onSolidGround, updateSlide, slideProgress, iceStep,
   rocket, heli, startRocket, startHeli, updateRocket, updateHeli, ROCKET, HELI,
-  boat, BOAT, startBoat, updateBoat, boatProject, boatScreenX, hurtBoat,
-  boatHorizonY, boatBottomY, finishBoat, boatPhase, buildGorge,
+  boat, BOAT, startBoat, updateBoat, boatProject, boatScreenX, spinOut,
+  boatHorizonY, boatBottomY, finishBoat, boatPhase, boatPace,
+  buildCourse, walkCourse, segAt, thingView, turtleUp, turtleState, thingSolid, ramBoss,
   scatterStars, crashRocket, updateAliens, takeHeliHit, overMedian, medianLane,
   TWISTS, RIVER_PRESETS, LEVEL_LOOP, levelTag, clampPickedLevel, ghosts,
   ENGINE_PROFILES, SOUNDS, PALETTES, engineProfileFor,
