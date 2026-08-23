@@ -1,0 +1,76 @@
+/* ==========================================================================
+   FROGGER  ::  style.css
+   --------------------------------------------------------------------------
+   The page around the game. The game itself is drawn on the canvas, so
+   almost all visual customising happens in js/config.js instead.
+   ========================================================================== */
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #08080c;
+  /* Stop iOS from bouncing the page when you swipe to move the frog. */
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px;
+  font-family: "Courier New", ui-monospace, monospace;
+}
+
+/* The canvas has its pixel size set by JS from CONFIG, and its display
+   size set by JS to fit the window. */
+canvas {
+  display: block;
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px #2a2a38, 0 18px 50px rgba(0, 0, 0, 0.6);
+  /* Swipes on the canvas are ours, not the browser's. */
+  touch-action: none;
+}
+
+
+/* --------------------------------------------------------------------------
+   On-screen arrow buttons for phones and tablets
+   -------------------------------------------------------------------------- */
+
+#touchpad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+#touchpad[hidden] { display: none; }
+
+#touchpad .row {
+  display: flex;
+  gap: 8px;
+}
+
+#touchpad button {
+  width: 68px;
+  height: 52px;
+  font-size: 20px;
+  color: #dfe3ea;
+  background: #1c1c26;
+  border: 2px solid #2f2f40;
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#touchpad button:active {
+  background: #2f2f40;
+  transform: translateY(1px);
+}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Frogger</title>
+  <meta name="description" content="A classic-style Frogger you can customise.">
+  <meta name="theme-color" content="#12121a">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <canvas id="game"></canvas>
+
+  <!-- On-screen controls. Shown automatically on touchscreens, or forced
+       on/off with CONFIG.touchControls in js/config.js -->
+  <div id="touchpad" hidden>
+    <button data-dx="0"  data-dy="-1" aria-label="Up">▲</button>
+    <div class="row">
+      <button data-dx="-1" data-dy="0" aria-label="Left">◀</button>
+      <button data-dx="0"  data-dy="1" aria-label="Down">▼</button>
+      <button data-dx="1"  data-dy="0" aria-label="Right">▶</button>
+    </div>
+  </div>
+
+  <!-- Load order matters: config, then the art layer, then the engine.
+       Plain scripts (not modules) so index.html also works when you just
+       double-click it, with no web server involved. -->
+  <script src="js/config.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+
+</body>
+</html>
