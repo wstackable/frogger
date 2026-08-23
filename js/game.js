@@ -94,36 +94,43 @@ function fitToScreen() {
    only SOME groups dive.
    ========================================================================== */
 
-const lanes = LANES.map((def, row) => {
-  const lane = {
-    row,
-    type: def.type,
-    kind: def.kind,
-    speed: def.speed || 0,
-    spacing: def.spacing || [1],
-    cells: def.length || 1,
-    width: (def.length || 1) * GRID,
-    dive: def.dive || false,
-    bounce: !!def.bounce,
-    fromLevel: def.fromLevel || 1,
-    hasGators: !!def.gator,
-    hasLady: !!def.lady,
-    background: def.background || null,
-    /* Diving groups within one row sink together, which gives the row a
-       rhythm you can learn. Different rows are offset so they are never all
-       down at the same moment. */
-    divePhase: row * 2.3,
-    obstacles: [],
-  };
+/* One lane, with its authored defaults. The obstacles themselves are filled in
+   per level by buildObstacles(), because a level can make the river more
+   generous or switch a lane of traffic off entirely. */
+const lanes = LANES.map((def, row) => ({
+  row,
+  type: def.type,
+  kind: def.kind,
+  baseSpeed: def.speed || 0,
+  speed: def.speed || 0,
+  baseSpacing: def.spacing || [1],
+  spacing: def.spacing || [1],
+  baseCells: def.length || 1,
+  cells: def.length || 1,
+  width: (def.length || 1) * GRID,
+  dive: def.dive || false,
+  bounce: !!def.bounce,
+  hasGators: !!def.gator,
+  hasLady: !!def.lady,
+  background: def.background || null,
+  active: true,
+  divePhase: row * 2.3,
+  obstacles: [],
+}));
 
-  if (!def.kind || !def.spacing) return lane;   /* home / safe / start rows */
+/* Lay a lane out from scratch. Called whenever a level starts, since the
+   spacing and log length can both change from one level to the next. */
+function buildObstacles(lane) {
+  lane.obstacles.length = 0;
+  lane.width = lane.cells * GRID;
+  if (!lane.kind || !lane.spacing.length) return;
 
   const patternWidth =
     lane.spacing.reduce((a, b) => a + b, 0) * GRID +
     lane.spacing.length * lane.width;
 
-  /* Overshoot the right edge by a whole pattern so even a six-square log
-     never pops into existence halfway across. */
+  /* Overshoot the right edge by a whole pattern so even a long log never pops
+     into existence halfway across. */
   let endX = patternWidth;
   while (endX < WIDTH) endX += patternWidth;
   endX += patternWidth;
@@ -132,50 +139,59 @@ const lanes = LANES.map((def, row) => {
   let index = 0;
   while (x < endX) {
     lane.obstacles.push({
-      x,
-      index,
-      cells: lane.cells,
-      vx: lane.speed,
-      dives: false,
-      variant: null,
+      x, index, cells: lane.cells, vx: lane.speed,
+      dives: false, variant: null, deadUntil: 0,
     });
     x += lane.width + lane.spacing[index] * GRID;
     index = (index + 1) % lane.spacing.length;
   }
 
-  /* Alternating dives only stay alternating as groups cycle round if there
-     is an EVEN number of them, so top up by one if needed. The extra one
-     just sits further off screen. */
-  if (lane.dive === 'alternate' && lane.obstacles.length % 2 === 1) {
-    const last = lane.obstacles[lane.obstacles.length - 1];
-    lane.obstacles.push({
-      x: last.x + lane.width + lane.spacing[last.index] * GRID,
-      index: (last.index + 1) % lane.spacing.length,
-      cells: lane.cells,
-      vx: lane.speed,
-      dives: false,
-      variant: null,
-    });
+  /* Alternating dives only stay alternating as groups cycle round if there is
+     an even number of them, so top up by one if needed. */
+  const every = diveEvery(lane.dive);
+  if (every >= 2) {
+    while (lane.obstacles.length % every !== 0) {
+      const last = lane.obstacles[lane.obstacles.length - 1];
+      lane.obstacles.push({
+        x: last.x + lane.width + lane.spacing[last.index] * GRID,
+        index: (last.index + 1) % lane.spacing.length,
+        cells: lane.cells, vx: lane.speed,
+        dives: false, variant: null, deadUntil: 0,
+      });
+    }
   }
 
-  /* Decide which groups dive. */
   lane.obstacles.forEach((ob, i) => {
-    if (lane.dive === 'all') ob.dives = true;
-    else if (lane.dive === 'alternate') ob.dives = i % 2 === 0;
+    ob.dives = every > 0 && i % every === 0;
   });
+}
 
-  return lane;
-});
+/* dive: false | 'all' | 'alternate' | a number meaning every nth group. */
+function diveEvery(dive) {
+  if (!dive) return 0;
+  if (dive === 'all') return 1;
+  if (dive === 'alternate') return 2;
+  const n = Number(dive);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;
+}
 
 const riverLanes = lanes.filter((l) => l.type === 'river');
 const homeRow    = lanes.findIndex((l) => l.type === 'home');
 const ladyLanes  = lanes.filter((l) => l.hasLady);
 
-/* Is this row's traffic switched on at the current level? Snakes on the
-   median, for instance, only turn up at level 3. */
+/* Is this row's traffic switched on for the level we are playing? */
 function laneActive(lane) {
-  return game.level >= lane.fromLevel;
+  return lane.active;
 }
+
+/* The road rows that carry traffic, nearest the start line first, so a level
+   that only wants two lanes switches on the two you meet first. */
+const trafficRows = lanes
+  .filter((l) => l.type === 'road' && l.kind !== 'snake')
+  .map((l) => l.row)
+  .sort((a, b) => b - a);
+
+const snakeLane = lanes.find((l) => l.kind === 'snake') || null;
 
 
 /* ==========================================================================
@@ -213,6 +229,8 @@ const game = {
   frog: null,
   deathReason: '',
   bonusTotal: 0,       /* what the last bonus round was worth */
+  ghostTime: 0,        /* banked world time, for the boneyard level */
+  pickedLevel: 1,      /* which level the title screen is pointing at */
   lastBonus: null,     /* a little "+200" that floats up */
   notice: null,        /* the R / M / C popup: { text, at } */
 };
@@ -233,6 +251,8 @@ function newFrog() {
     hopFromX: x,
     hopFromY: laneY(START_ROW),
     hopT: 1e9,
+    slideDir: null,
+    slideAt: 0,
   };
 }
 
@@ -273,16 +293,112 @@ function cycleMode(step) {
   localStorage.setItem('frogger.mode', game.mode);
 }
 
-/* Speed climbs with the level, but eases off every few levels before
-   climbing again, which is what the cabinet did. */
+/* ==========================================================================
+   The level plan
+   --------------------------------------------------------------------------
+   LEVELS in config.js says what each level is. Past the end of the list the
+   last stretch repeats with the speed still climbing, so a good player never
+   runs out of game.
+   ========================================================================== */
+
+function planFor(n) {
+  if (!LEVELS.length) return { name: 'Level ' + n, kind: 'cross', env: 'pond' };
+  if (n <= LEVELS.length) return LEVELS[n - 1];
+
+  const from = Math.max(1, Math.min(LEVEL_LOOP.from, LEVELS.length));
+  const span = LEVELS.length - from + 1;
+  const into = (n - LEVELS.length - 1) % span;
+  return LEVELS[from - 1 + into];
+}
+
+/* How many times we have been round the looping stretch. */
+function lapsFor(n) {
+  if (!LEVELS.length || n <= LEVELS.length) return 0;
+  const from = Math.max(1, Math.min(LEVEL_LOOP.from, LEVELS.length));
+  const span = LEVELS.length - from + 1;
+  return 1 + Math.floor((n - LEVELS.length - 1) / span);
+}
+
+function plan() {
+  return planFor(game.level);
+}
+
+function levelKind() {
+  return plan().kind || 'cross';
+}
+
+function levelName(n) {
+  const p = planFor(n);
+  const laps = lapsFor(n);
+  return laps > 0 ? `${p.name} +${laps}` : p.name;
+}
+
+/* Does this level have that hazard? */
+function hazard(name) {
+  const h = plan().hazards;
+  return Array.isArray(h) && h.indexOf(name) !== -1;
+}
+
+/* A one-off twist on a normal crossing: ice, dark, ghost. */
+function twist(name) {
+  const r = plan().rules;
+  return !!(r && r[name]);
+}
+
+/* Everything moves at the level's speed, nudged by the mode and by how many
+   laps of the looping stretch we have done. */
 function speedMultiplier() {
-  const p = PROGRESSION;
-  const step = setting('speedStep', p.speedStep);
-  const n = game.level - 1;
-  const cycles = Math.floor(n / p.easeEvery);
-  const within = n % p.easeEvery;
-  const retained = cycles * p.easeEvery * step * (1 - p.easeAmount);
-  return 1 + retained + within * step;
+  const p = plan();
+  const base = typeof p.speed === 'number' ? p.speed : 1;
+  const laps = lapsFor(game.level);
+  return base * (1 + laps * LEVEL_LOOP.speedPerLap) * setting('speedScale', 1);
+}
+
+/* --------------------------------------------------------------------------
+   Lay the board out for the level we are about to play.
+   -------------------------------------------------------------------------- */
+function applyPlan() {
+  const p = plan();
+
+  Art.setEnvironment(p.env || 'pond');
+
+  const river = RIVER_PRESETS[p.river] || RIVER_PRESETS.normal;
+  const wantedLanes = typeof p.roadLanes === 'number' ? p.roadLanes : trafficRows.length;
+  const liveTraffic = new Set(trafficRows.slice(0, Math.max(0, wantedLanes)));
+
+  for (const lane of lanes) {
+    /* Start from what LANES authored, then let the level adjust it. */
+    lane.speed = lane.baseSpeed;
+    lane.spacing = lane.baseSpacing.slice();
+    lane.cells = lane.baseCells;
+    lane.dive = false;
+    lane.active = true;
+
+    if (lane.type === 'river') {
+      lane.cells = Math.max(1, lane.baseCells + river.length);
+      lane.spacing = lane.baseSpacing.map((g) => Math.max(0, g + river.gap));
+      /* Turtles only dive if this level says so. */
+      if (lane.kind === 'turtle') {
+        lane.dive = hazard('diving') ? (LANES[lane.row].dive || 'alternate') : false;
+      }
+    }
+
+    if (lane.type === 'road') {
+      if (lane.kind === 'snake') lane.active = hazard('snake');
+      else lane.active = liveTraffic.has(lane.row);
+    }
+
+    buildObstacles(lane);
+  }
+
+  /* Which logs are crocodiles. */
+  for (const lane of lanes) {
+    if (!lane.hasGators) continue;
+    const on = hazard('gator');
+    lane.obstacles.forEach((ob, i) => {
+      ob.variant = (on && i % PROGRESSION.gatorEveryNthLog === 0) ? 'gator' : null;
+    });
+  }
 }
 
 
@@ -290,13 +406,12 @@ function speedMultiplier() {
    Lifecycle
    ========================================================================== */
 
-function startGame() {
+function startGame(atLevel) {
   game.score = 0;
-  game.level = 1;
+  game.level = Math.max(1, atLevel || game.pickedLevel || 1);
   game.lives = setting('lives', CONFIG.lives);
   game.nextExtraLife = CONFIG.score.extraLifeEvery;
-  startLevel();
-  setState('play');
+  enterLevel();
 }
 
 function startLevel() {
@@ -308,19 +423,12 @@ function startLevel() {
   game.lastBonus = null;
   game.nextBaySpawn = game.time + setting('baySpawnGap', CONFIG.timing.baySpawnGap);
   game.nextLadySpawn = game.time + CONFIG.timing.ladySpawnGap * 0.5;
+  game.ghostTime = 0;
 
-  /* Same seed for the same level, so the bonus pattern is learnable. */
+  /* Same seed for the same level, so the pattern is learnable. */
   seedRng(game.level * 7919 + 13);
 
-  /* Decide which logs are crocodiles this level. */
-  for (const lane of lanes) {
-    if (!lane.hasGators) continue;
-    const on = game.level >= PROGRESSION.gatorFromLevel;
-    lane.obstacles.forEach((ob, i) => {
-      ob.variant = (on && i % PROGRESSION.gatorEveryNthLog === 0) ? 'gator' : null;
-    });
-  }
-
+  applyPlan();
   respawn();
 }
 
@@ -330,9 +438,20 @@ function respawn() {
   game.carrying = false;
 }
 
-/* The engine idles through the countdown and cuts when the rampage ends. */
-const engineState = (st) => st === 'bonusIntro' || st === 'bonus';
-const bonusState = (st) => engineState(st) || st === 'bonusResults';
+/* The engine idles through the countdown and cuts when the level ends. */
+const engineState = (st) => st === 'bonusIntro'  || st === 'bonus' ||
+                            st === 'heliIntro'   || st === 'heli' ||
+                            st === 'rocketIntro' || st === 'rocket';
+
+function engineProfileFor(st) {
+  if (st === 'heliIntro' || st === 'heli') return 'helicopter';
+  if (st === 'rocketIntro' || st === 'rocket') return 'rocket';
+  return 'truck';
+}
+const bonusState = (st) => engineState(st) || st === 'bonusResults' ||
+                           st === 'heliResults' ||
+                           st === 'rocketIntro' || st === 'rocket' ||
+                           st === 'rocketResults';
 
 function setState(next) {
   const wasEngine = engineState(game.state);
@@ -341,12 +460,18 @@ function setState(next) {
   game.state = next;
   game.stateTime = 0;
 
-  if (!wasEngine && engineState(next)) Engine.start();
-  if (wasEngine && !engineState(next)) Engine.stop();
-
-  /* The rampage borrows the radio and gives it back afterwards. */
-  if (!wasBonus && bonusState(next)) Music.playNamed(BONUS.music);
-  if (wasBonus && !bonusState(next)) Music.restorePrevious();
+  /* Two special levels back to back share an engine state, so simply asking
+     it to start again would be a no-op and you would drive a monster truck
+     that sounds like a helicopter. Swap the profile properly. */
+  const wantProfile = engineState(next) ? engineProfileFor(next) : null;
+  if (!wantProfile) {
+    if (Engine.running) Engine.stop();
+  } else if (!Engine.running) {
+    Engine.start(wantProfile);
+  } else if (Engine.profile !== wantProfile) {
+    Engine.stop();
+    Engine.start(wantProfile);
+  }
 }
 
 function addScore(points, label) {
@@ -443,6 +568,7 @@ function update(dt) {
       }
       updateBayHazard(dt);
       updateLady(dt);
+      updateSlide();
       checkLane(dt);
       break;
     }
@@ -478,10 +604,36 @@ function update(dt) {
     }
 
     case 'bonusResults': {
-      if (game.stateTime > BONUS.resultsTime) {
-        startLevel();
-        setState('play');
-      }
+      if (game.stateTime > BONUS.resultsTime) advanceLevel();
+      break;
+    }
+
+    /* --- the rocket --- */
+    case 'rocketIntro': {
+      if (game.stateTime > ROCKET.introTime) setState('rocket');
+      break;
+    }
+    case 'rocket': {
+      updateRocket(dt);
+      if (game.lives <= 0) { Sound.play('over'); setState('gameOver'); }
+      break;
+    }
+    case 'rocketResults': {
+      if (game.stateTime > ROCKET.resultsTime) advanceLevel();
+      break;
+    }
+
+    /* --- the helicopter --- */
+    case 'heliIntro': {
+      if (game.stateTime > HELI.introTime) setState('heli');
+      break;
+    }
+    case 'heli': {
+      updateHeli(dt);
+      break;
+    }
+    case 'heliResults': {
+      if (game.stateTime > HELI.resultsTime) advanceLevel();
       break;
     }
   }
@@ -496,15 +648,41 @@ function advanceLevel() {
     game.lives = Math.max(game.lives, setting('lives', CONFIG.lives));
   }
 
-  if (isBonusLevel(game.level)) {
-    startBonusRound();
-    Sound.play('bonus');
-    setState('bonusIntro');
-    return;
-  }
+  enterLevel();
+}
 
+/* Set the board up and hand over to whichever kind of level this is. */
+function enterLevel() {
   startLevel();
-  setState('play');
+
+  /* A level, its environment or its kind can claim a particular track. Levels
+     that claim nothing get the shuffle back. */
+  const track = Music.trackForLevel(plan());
+  if (track) Music.playNamed(track);
+  else Music.restorePrevious();
+
+  switch (levelKind()) {
+    case 'truck':
+      startBonusRound();
+      Sound.play('bonus');
+      setState('bonusIntro');
+      return;
+
+    case 'rocket':
+      startRocket();
+      Sound.play('bonus');
+      setState('rocketIntro');
+      return;
+
+    case 'heli':
+      startHeli();
+      Sound.play('bonus');
+      setState('heliIntro');
+      return;
+
+    default:
+      setState('play');
+  }
 }
 
 /* True for the whole bonus sequence, intro and tally included. */
@@ -514,6 +692,16 @@ function inBonus() {
 }
 
 function moveObstacles(dt) {
+  /* In the boneyard the world is watching you, not the other way round: it
+     only advances when the frog moves, in a burst after each hop, plus a slow
+     trickle so it is never completely still. Straight out of a Mario ghost
+     house, and it turns the level into a puzzle. */
+  if (twist('ghost') && game.state === 'play') {
+    const spend = Math.min(game.ghostTime, dt);
+    game.ghostTime -= spend;
+    dt = spend + dt * TWISTS.ghostDrift;
+  }
+
   const step = dt * 60 * speedMultiplier();
 
   for (const lane of lanes) {
@@ -582,8 +770,8 @@ function updateBayHazard(dt) {
 
   const bay = empty[Math.floor(rng() * empty.length)];
 
-  const crocOk = game.level >= PROGRESSION.bayCrocFromLevel;
-  const flyOk  = game.level >= PROGRESSION.flyFromLevel;
+  const crocOk = hazard('bayCroc');
+  const flyOk  = hazard('fly');
   let kind = null;
   if (crocOk && flyOk)      kind = rng() < 0.5 ? 'fly' : 'croc';
   else if (flyOk)           kind = 'fly';
@@ -599,7 +787,7 @@ function updateBayHazard(dt) {
    Rides a log. Hop onto her square to pick her up, then get home for 200.
    -------------------------------------------------------------------------- */
 function updateLady(dt) {
-  if (game.level < PROGRESSION.ladyFromLevel || !ladyLanes.length) return;
+  if (!hazard('lady') || !ladyLanes.length) return;
 
   if (game.lady) {
     /* She goes with her log. Once it leaves the screen she is gone. */
@@ -817,11 +1005,9 @@ const bonus = {
   flash: 0,
 };
 
-/* Does the run into this level get a bonus round first? */
+/* Is that level a monster truck rampage? */
 function isBonusLevel(level) {
-  if (!BONUS || !BONUS.firstLevel) return false;
-  if (level < BONUS.firstLevel) return false;
-  return (level - BONUS.firstLevel) % Math.max(1, BONUS.everyLevels) === 0;
+  return planFor(level).kind === 'truck';
 }
 
 /* Anything in a road or river row is fair game. */
@@ -866,10 +1052,11 @@ function calmDown() {
 }
 
 /* What is this thing worth? */
-function smashValue(lane) {
-  if (lane.type === 'river') return BONUS.points.boat;
-  if (lane.cells >= 2) return BONUS.points.truck;
-  return BONUS.points.car;
+function smashValue(lane, rules) {
+  const pts = (rules || BONUS).points;
+  if (lane.type === 'river') return pts.boat;
+  if (lane.cells >= 2) return pts.truck;
+  return pts.car;
 }
 
 function updateBonus(dt) {
@@ -933,12 +1120,13 @@ function updateBonus(dt) {
   }
 }
 
-function smash(lane, ob) {
-  ob.deadUntil = game.time + BONUS.respawnDelay;
+function smash(lane, ob, rules, sfx) {
+  const R = rules || BONUS;
+  ob.deadUntil = game.time + R.respawnDelay;
 
   /* Keep the run going and the multiplier climbs. */
-  if (game.time - bonus.lastSmash <= BONUS.comboWindow) {
-    bonus.combo = Math.min(BONUS.comboMax, bonus.combo + 1);
+  if (game.time - bonus.lastSmash <= R.comboWindow) {
+    bonus.combo = Math.min(R.comboMax, bonus.combo + 1);
   } else {
     bonus.combo = 1;
   }
@@ -946,7 +1134,7 @@ function smash(lane, ob) {
   bonus.bestCombo = Math.max(bonus.bestCombo, bonus.combo);
   bonus.smashed++;
 
-  const gained = smashValue(lane) * bonus.combo;
+  const gained = smashValue(lane, R) * bonus.combo;
   bonus.points += gained;
 
   const cx = ob.x + ob.cells * GRID / 2;
@@ -967,7 +1155,7 @@ function smash(lane, ob) {
   bonus.shake = Math.min(11, 5 + bonus.combo * 0.7);
   bonus.flash = Math.min(0.55, 0.22 + bonus.combo * 0.04);
 
-  Sound.play(bonus.combo >= 5 ? 'bigsmash' : 'smash');
+  Sound.play(sfx || (bonus.combo >= 5 ? 'bigsmash' : 'smash'));
   Engine.rev(0.14 + bonus.combo * 0.02);   /* the engine bites as it hits */
 }
 
@@ -996,6 +1184,261 @@ function spawnDebris(x, y, color, count) {
 }
 
 
+
+
+/* ==========================================================================
+   ROCKET LEVEL
+   --------------------------------------------------------------------------
+   No hopping. Slide along the bottom, pick your moment, launch. The rocket
+   climbs on its own and a crosswind shoves it about, so the whole level is one
+   question asked three times: can you line up with a lilypad from down here?
+   ========================================================================== */
+
+const rocket = {
+  x: 0, y: 0,
+  flying: false,
+  attemptsLeft: 0,
+  landed: 0,
+  points: 0,
+  wind: 0,
+  windPhase: 0,
+  trail: [],
+  outcome: '',
+  outcomeAt: -99,
+};
+
+function startRocket() {
+  rocket.attemptsLeft = ROCKET.attempts;
+  rocket.landed = 0;
+  rocket.points = 0;
+  rocket.trail.length = 0;
+  rocket.outcome = '';
+  rocket.outcomeAt = -99;
+  rocket.windPhase = rng() * 6.28;
+  resetRocket();
+}
+
+function resetRocket() {
+  rocket.x = START_COL * GRID;
+  rocket.y = laneY(START_ROW);
+  rocket.flying = false;
+  rocket.wind = 0;
+  rocket.trail.length = 0;
+}
+
+function launchRocket() {
+  if (rocket.flying || !rocket.attemptsLeft) return;
+  rocket.flying = true;
+  rocket.attemptsLeft--;
+  Sound.play('launch');
+  Engine.rev(1.2);          /* holds the roar wide open off the pad */
+  bonus.shake = 8;
+  spawnDebris(rocket.x + GRID / 2, rocket.y + GRID, '#ffb020', 22);
+}
+
+function rocketOutcome(text) {
+  rocket.outcome = text;
+  rocket.outcomeAt = game.time;
+}
+
+function updateRocket(dt) {
+  /* The wind wanders rather than flipping, so you can read it before you go. */
+  rocket.windPhase += dt * ROCKET.windTurns * 6.28;
+  rocket.wind = Math.sin(rocket.windPhase) * ROCKET.wind;
+
+  if (!rocket.flying) {
+    /* Lining up. Side to side only. */
+    let dx = 0;
+    if (held.left) dx -= 1;
+    if (held.right) dx += 1;
+    rocket.x += dx * BONUS.speed * dt;
+    rocket.x = Math.max(0, Math.min(WIDTH - GRID, rocket.x));
+
+    if (held.up) launchRocket();
+
+    if (!rocket.attemptsLeft && game.time - rocket.outcomeAt > 1.2) {
+      finishRocket();
+    }
+    return;
+  }
+
+  /* Flying. You get some say, the wind gets the rest. */
+  let steer = 0;
+  if (held.left) steer -= 1;
+  if (held.right) steer += 1;
+
+  rocket.x += (steer * ROCKET.steer + rocket.wind) * dt;
+  rocket.y -= ROCKET.climb * dt;
+  rocket.x = Math.max(-GRID * 0.4, Math.min(WIDTH - GRID * 0.6, rocket.x));
+
+  rocket.trail.push({ x: rocket.x + GRID / 2, y: rocket.y + GRID, at: game.time });
+  if (rocket.trail.length > 90) rocket.trail.shift();
+
+  /* Reached the bank. Did we line it up? */
+  if (rocket.y <= laneY(0)) {
+    const bay = CONFIG.homeCols.findIndex(
+      (c) => Math.abs(rocket.x - c * GRID) < GRID * 0.55
+    );
+    const good = bay >= 0 && !game.bays[bay];
+
+    if (good) {
+      game.bays[bay] = true;
+      rocket.landed++;
+      rocket.points += ROCKET.points;
+      addScore(ROCKET.points, `LANDED +${ROCKET.points}`);
+      Sound.play('home');
+      spawnDebris(rocket.x + GRID / 2, laneY(0) + GRID / 2, '#ffd84a', 18);
+      bonus.flash = 0.35;
+      rocketOutcome('PERFECT LANDING');
+
+      const needed = Math.max(1, Math.min(CONFIG.baysToClear, CONFIG.homeCols.length));
+      if (game.bays.filter(Boolean).length >= needed) {
+        finishRocket();
+        return;
+      }
+    } else {
+      Sound.play('splash');
+      spawnDebris(rocket.x + GRID / 2, laneY(0) + GRID / 2, '#ff4040', 20);
+      bonus.shake = 9;
+      bonus.flash = 0.3;
+      rocketOutcome(bay >= 0 ? 'THAT PAD IS TAKEN' : 'MISSED THE PAD');
+    }
+
+    resetRocket();
+    if (!rocket.attemptsLeft && game.bays.filter(Boolean).length === 0) {
+      /* Out of rockets with nothing to show for it: that costs a frog. */
+      game.lives--;
+    }
+  }
+}
+
+function finishRocket() {
+  Sound.play(rocket.landed ? 'fanfare' : 'over');
+  setState('rocketResults');
+}
+
+
+/* ==========================================================================
+   HELICOPTER LEVEL
+   --------------------------------------------------------------------------
+   Free flight with a machine gun. Built on the rampage's guts: same free
+   movement, same combo, same debris, same shake. What is new is that you hit
+   things at a distance instead of by driving into them.
+   ========================================================================== */
+
+const heli = {
+  x: 0, y: 0,
+  aim: [0, -1],
+  nextShot: 0,
+  bullets: [],
+  timeLeft: 0,
+};
+
+function startHeli() {
+  heli.x = (WIDTH - TRUCK_SIZE) / 2;
+  heli.y = laneY(START_ROW) - GRID * 0.5;
+  heli.aim = [0, -1];
+  heli.nextShot = 0;
+  heli.bullets.length = 0;
+  heli.timeLeft = HELI.duration;
+
+  bonus.smashed = 0;
+  bonus.combo = 0;
+  bonus.bestCombo = 0;
+  bonus.lastSmash = -99;
+  bonus.points = 0;
+  calmDown();
+  for (const lane of lanes) for (const ob of lane.obstacles) ob.deadUntil = 0;
+}
+
+function updateHeli(dt) {
+  heli.timeLeft -= dt;
+
+  let dx = 0, dy = 0;
+  if (held.left)  dx -= 1;
+  if (held.right) dx += 1;
+  if (held.up)    dy -= 1;
+  if (held.down)  dy += 1;
+  if (dx && dy) { dx *= 0.7071; dy *= 0.7071; }
+
+  heli.x += dx * HELI.speed * dt;
+  heli.y += dy * HELI.speed * dt;
+  heli.x = Math.max(0, Math.min(WIDTH - TRUCK_SIZE, heli.x));
+  heli.y = Math.max(GRID, Math.min(HEIGHT - GRID - TRUCK_SIZE, heli.y));
+
+  /* The gun points where you are going. Stand still and it keeps pointing
+     wherever you were last headed, so you can hover and hose a lane. */
+  if (dx || dy) heli.aim = [dx, dy];
+
+  /* Fire, always. There is no trigger: it is more fun without one. */
+  heli.nextShot -= dt;
+  if (heli.nextShot <= 0) {
+    heli.nextShot = HELI.fireEvery;
+    const [ax, ay] = heli.aim;
+    heli.bullets.push({
+      x: heli.x + TRUCK_SIZE / 2,
+      y: heli.y + TRUCK_SIZE / 2,
+      vx: ax * HELI.bulletSpeed,
+      vy: ay * HELI.bulletSpeed,
+    });
+    Sound.play('shot');
+  }
+
+  /* Move the bullets and see what they hit. */
+  for (let i = heli.bullets.length - 1; i >= 0; i--) {
+    const b = heli.bullets[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+
+    if (b.x < -20 || b.x > WIDTH + 20 || b.y < GRID - 20 || b.y > HEIGHT) {
+      heli.bullets.splice(i, 1);
+      continue;
+    }
+
+    let hit = false;
+    for (const lane of smashableLanes()) {
+      if (!laneActive(lane)) continue;
+      const ly = laneY(lane.row);
+      if (b.y < ly || b.y > ly + GRID) continue;
+      for (const ob of lane.obstacles) {
+        if (ob.deadUntil > game.time) continue;
+        if (b.x >= ob.x && b.x <= ob.x + ob.cells * GRID) {
+          smash(lane, ob, HELI, 'explode');
+          hit = true;
+          break;
+        }
+      }
+      if (hit) break;
+    }
+    if (hit) heli.bullets.splice(i, 1);
+  }
+
+  if (bonus.combo && game.time - bonus.lastSmash > HELI.comboWindow) bonus.combo = 0;
+
+  for (let i = bonus.particles.length - 1; i >= 0; i--) {
+    const p = bonus.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) { bonus.particles.splice(i, 1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 420 * dt;
+  }
+  for (let i = bonus.floats.length - 1; i >= 0; i--) {
+    if (game.time - bonus.floats[i].at > 1.1) bonus.floats.splice(i, 1);
+  }
+
+  if (heli.timeLeft <= 0) {
+    heli.timeLeft = 0;
+    game.bonusTotal = bonus.points;
+    addScore(bonus.points);
+    calmDown();
+    heli.bullets.length = 0;
+    Sound.play('fanfare');
+    setState('heliResults');
+  }
+}
+
+
 /* ==========================================================================
    Input
    ========================================================================== */
@@ -1010,6 +1453,9 @@ function hop(dx, dy) {
   frog.hopFromX = frog.x;
   frog.hopFromY = laneY(frog.row);
   frog.hopT = 0;
+
+  /* Every hop winds the boneyard's clock forward a little. */
+  if (twist('ghost')) game.ghostTime += TWISTS.ghostPerHop;
 
   /* Sideways hops land on the column grid even if the frog had drifted while
      riding a log, which is what makes aiming at a lilypad possible. */
@@ -1030,6 +1476,30 @@ function hop(dx, dy) {
 
   Sound.play('hop');
   checkLane(0);          /* react now, do not wait for the next frame */
+
+  /* On ice you keep going SIDEWAYS. Only sideways: an early version slid you
+     an extra row as well, which meant you could not stop on a road lane at
+     all and the late ice level was unplayable. Sliding side to side is the
+     recognisable thing anyway, and it makes the twist about aiming rather
+     than about dying. The slide is a second, separate hop, so it gets checked
+     for cars and water exactly like the first one. */
+  if (dx !== 0 && twist('ice') && !sliding && game.state === 'play') {
+    frog.slideDir = [dx, 0];
+    frog.slideAt = game.time + TWISTS.slideDelay;
+  }
+}
+
+/* Set while a slide is being performed, so a slide cannot cause a slide. */
+let sliding = false;
+
+function updateSlide() {
+  const frog = game.frog;
+  if (!frog || !frog.slideDir || game.time < frog.slideAt) return;
+  const [dx, dy] = frog.slideDir;
+  frog.slideDir = null;
+  sliding = true;
+  hop(dx, dy);
+  sliding = false;
 }
 
 const KEYS = {
@@ -1069,10 +1539,15 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     setHeld(e.key, true);
 
-    /* On the title screen, left and right choose beginner or expert. */
-    if (game.state === 'title' && move[0] !== 0) {
-      cycleMode(move[0]);
-      Sound.play('hop');
+    /* On the title screen the arrows drive the pickers, not the frog. */
+    if (game.state === 'title') {
+      if (move[0] !== 0) { cycleMode(move[0]); Sound.play('hop'); }
+      if (move[1] !== 0) {
+        game.pickedLevel = (game.pickedLevel || 1) + move[1];
+        clampPickedLevel();
+        Art.setEnvironment(planFor(game.pickedLevel).env || 'pond');
+        Sound.play('hop');
+      }
       return;
     }
 
@@ -1176,7 +1651,16 @@ if (touchVisible()) {
     /* The truck needs the button held, the frog just needs a tap. */
     if (inBonus()) { held[dirOf(btn)] = true; return; }
 
-    if (game.state === 'title' && dx !== 0) { cycleMode(dx); Sound.play('hop'); return; }
+    if (game.state === 'title') {
+      if (dx !== 0) { cycleMode(dx); Sound.play('hop'); }
+      if (dy !== 0) {
+        game.pickedLevel = (game.pickedLevel || 1) + dy;
+        clampPickedLevel();
+        Art.setEnvironment(planFor(game.pickedLevel).env || 'pond');
+        Sound.play('hop');
+      }
+      return;
+    }
     hop(dx, dy);
   });
 
@@ -1235,16 +1719,32 @@ function draw() {
   }
 
   drawBackground();
+  drawStars();
   drawObstacles();
 
-  if (inBonus()) {
+  const st = game.state;
+  const truckLevel = st === 'bonusIntro' || st === 'bonus' || st === 'bonusResults';
+  const heliLevel = st === 'heliIntro' || st === 'heli' || st === 'heliResults';
+  const rocketLevel = st === 'rocketIntro' || st === 'rocket' || st === 'rocketResults';
+
+  if (truckLevel) {
     drawBays();              /* so the bank does not look unfinished */
     drawTruck();
     drawParticles();
+  } else if (heliLevel) {
+    drawBays();
+    drawHeli();
+    drawParticles();
+  } else if (rocketLevel) {
+    drawBays();
+    drawRocket();
+    drawParticles();
   } else {
+    drawGhosts();
     drawLady();
     drawBays();
     if (game.frog) drawFrog();
+    drawDarkness();
   }
 
   ctx.restore();
@@ -1254,10 +1754,17 @@ function draw() {
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
   }
 
-  if (inBonus()) {
+  if (truckLevel) {
     drawFloats();
     drawComboMeter();
     drawBonusHud();
+  } else if (heliLevel) {
+    drawFloats();
+    drawComboMeter();
+    drawHeliHud();
+  } else if (rocketLevel) {
+    drawHud();
+    drawRocketHud();
   } else {
     drawHud();
   }
@@ -1562,12 +2069,57 @@ function drawBonusHud() {
    The two big screens. These are pure showmanship and that is the point: the
    bonus round should feel like the game stopping to hand you a present.
    -------------------------------------------------------------------------- */
-function drawBonusOverlay() {
-  if (game.state !== 'bonusIntro' && game.state !== 'bonusResults') return;
+const SPECIAL_SCREENS = {
+  bonusIntro:   { kind: 'truck',  phase: 'intro' },
+  bonusResults: { kind: 'truck',  phase: 'results' },
+  heliIntro:    { kind: 'heli',   phase: 'intro' },
+  heliResults:  { kind: 'heli',   phase: 'results' },
+  rocketIntro:  { kind: 'rocket', phase: 'intro' },
+  rocketResults:{ kind: 'rocket', phase: 'results' },
+};
 
+const SPECIAL_COPY = {
+  truck: {
+    title: 'BONUS ROUND', sub: 'MONSTER TRUCK RAMPAGE', sprite: 'monsterTruck',
+    call: 'SMASH EVERYTHING',
+    how: ['drive with the arrows  ::  nothing can hurt you',
+          'keep hitting things to build the multiplier'],
+    over: 'RAMPAGE OVER',
+    ranks: [[30, 'DEMOLITION EXPERT'], [20, 'MENACE TO TRAFFIC'],
+            [10, 'KEEN DRIVER'], [0, 'LEARNER PLATES']],
+  },
+  heli: {
+    title: 'AIR SUPPORT', sub: 'ATTACK HELICOPTER', sprite: 'helicopter',
+    call: 'CLEAR THE ROAD',
+    how: ['fly with the arrows  ::  the gun fires by itself',
+          'it shoots the way you are flying'],
+    over: 'MISSION COMPLETE',
+    ranks: [[40, 'TOP GUN'], [25, 'GUNSHIP'], [12, 'ROOKIE PILOT'],
+            [0, 'TRAINEE']],
+  },
+  rocket: {
+    title: 'ROCKET RIDE', sub: 'ONE WAY, STRAIGHT UP', sprite: 'rocket',
+    call: 'LINE IT UP',
+    how: ['left and right to aim  ::  up to launch',
+          'the wind will push you, so allow for it'],
+    over: 'SPLASHDOWN',
+    ranks: [[3, 'PERFECT FLIGHT'], [2, 'STEADY HANDS'], [1, 'GOT THERE'],
+            [0, 'BACK TO THE DRAWING BOARD']],
+  },
+};
+
+function drawBonusOverlay() {
+  const screen = SPECIAL_SCREENS[game.state];
+  if (!screen) return;
+
+  const copy = SPECIAL_COPY[screen.kind];
   const cx = WIDTH / 2;
   const cy = HEIGHT / 2;
   const t = game.stateTime;
+
+  const introTime = screen.kind === 'heli' ? HELI.introTime
+                  : screen.kind === 'rocket' ? ROCKET.introTime
+                  : BONUS.introTime;
 
   /* Bands of colour sweeping across, which is about as loud as a canvas
      gets without a shader. */
@@ -1591,32 +2143,32 @@ function drawBonusOverlay() {
   const font = (px, bold) =>
     `${bold ? 'bold ' : ''}${Math.round(px)}px "Courier New", monospace`;
 
-  if (game.state === 'bonusIntro') {
+  if (screen.phase === 'intro') {
     /* Title thumping in time with itself. */
     const thump = 1 + Math.abs(Math.sin(t * 6)) * 0.09;
     ctx.font = font(GRID * 0.86 * thump, true);
     ctx.fillStyle = Math.floor(t * 8) % 2 ? '#fff' : Art.color('accent');
-    ctx.fillText('BONUS ROUND', cx, cy - GRID * 2.1);
+    ctx.fillText(copy.title, cx, cy - GRID * 2.1);
 
     ctx.font = font(GRID * 0.42, true);
     ctx.fillStyle = '#fff';
-    ctx.fillText('MONSTER TRUCK RAMPAGE', cx, cy - GRID * 1.2);
+    ctx.fillText(copy.sub, cx, cy - GRID * 1.2);
 
     const s2 = GRID * 2.4;
     const bob = Math.sin(t * 4) * GRID * 0.12;
-    drawArt(ctx, Art.of('monsterTruck'), cx - s2 / 2, cy - GRID * 0.6 + bob,
+    drawArt(ctx, Art.of(copy.sprite), cx - s2 / 2, cy - GRID * 0.6 + bob,
             s2, s2, { cells: 1, time: game.time });
 
     ctx.font = font(GRID * 0.34, true);
     ctx.fillStyle = Art.color('accent');
-    ctx.fillText('SMASH EVERYTHING', cx, cy + GRID * 1.5);
+    ctx.fillText(copy.call, cx, cy + GRID * 1.5);
     ctx.font = font(GRID * 0.27);
     ctx.fillStyle = '#dfe3ea';
-    ctx.fillText('drive with the arrows  ::  nothing can hurt you', cx, cy + GRID * 2.0);
-    ctx.fillText('keep hitting things to build the multiplier', cx, cy + GRID * 2.45);
+    ctx.fillText(copy.how[0], cx, cy + GRID * 2.0);
+    ctx.fillText(copy.how[1], cx, cy + GRID * 2.45);
 
     /* 3, 2, 1... */
-    const left = Math.max(0, BONUS.introTime - t);
+    const left = Math.max(0, introTime - t);
     const count = Math.ceil(left);
     if (count <= 3 && count >= 1) {
       const grow = 1 + (1 - (left % 1)) * 0.5;
@@ -1629,15 +2181,18 @@ function drawBonusOverlay() {
   } else {
     ctx.font = font(GRID * 0.8, true);
     ctx.fillStyle = Art.color('accent');
-    ctx.fillText('RAMPAGE OVER', cx, cy - GRID * 2.0);
+    ctx.fillText(copy.over, cx, cy - GRID * 2.0);
 
     /* The numbers count up rather than just appearing. */
     const reveal = Math.min(1, t / 1.2);
-    const rows = [
-      ['SMASHED',    String(Math.round(bonus.smashed * reveal))],
-      ['BEST COMBO', 'x' + Math.round(bonus.bestCombo * reveal)],
-      ['BONUS',      '+' + Math.round(bonus.points * reveal)],
-    ];
+    const tally = screen.kind === 'rocket' ? rocket.landed : bonus.smashed;
+    const rows = screen.kind === 'rocket'
+      ? [['LANDED',  `${Math.round(rocket.landed * reveal)} of ${ROCKET.attempts}`],
+         ['BONUS',   '+' + Math.round(rocket.points * reveal)]]
+      : [['DESTROYED',  String(Math.round(bonus.smashed * reveal))],
+         ['BEST COMBO', 'x' + Math.round(bonus.bestCombo * reveal)],
+         ['BONUS',      '+' + Math.round(bonus.points * reveal)]];
+    const last = rows.length - 1;
     rows.forEach(([k, v], i) => {
       const yy = cy - GRID * 0.9 + i * GRID * 0.85;
       ctx.font = font(GRID * 0.36, true);
@@ -1645,17 +2200,14 @@ function drawBonusOverlay() {
       ctx.fillStyle = '#dfe3ea';
       ctx.fillText(k, cx - GRID * 3.1, yy);
       ctx.textAlign = 'right';
-      ctx.fillStyle = i === 2 ? Art.color('accent') : '#fff';
-      ctx.font = font(GRID * (i === 2 ? 0.52 : 0.42), true);
+      ctx.fillStyle = i === last ? Art.color('accent') : '#fff';
+      ctx.font = font(GRID * (i === last ? 0.52 : 0.42), true);
       ctx.fillText(v, cx + GRID * 3.1, yy);
     });
 
     ctx.textAlign = 'center';
     if (t > 1.4) {
-      const rank = bonus.smashed >= 30 ? 'DEMOLITION EXPERT'
-                 : bonus.smashed >= 20 ? 'MENACE TO TRAFFIC'
-                 : bonus.smashed >= 10 ? 'KEEN DRIVER'
-                 : 'LEARNER PLATES';
+      const rank = (copy.ranks.find(([n]) => tally >= n) || [0, ''])[1];
       ctx.font = font(GRID * 0.42, true);
       ctx.fillStyle = Math.floor(t * 5) % 2 ? '#fff' : Art.color('timeBar');
       ctx.fillText(rank, cx, cy + GRID * 1.9);
@@ -1664,11 +2216,275 @@ function drawBonusOverlay() {
     if (t > 2.4) {
       ctx.font = font(GRID * 0.3);
       ctx.fillStyle = '#dfe3ea';
-      ctx.fillText('back to level ' + game.level + '...', cx, cy + GRID * 2.7);
+      ctx.fillText('next: ' + levelName(game.level + 1), cx, cy + GRID * 2.7);
     }
   }
 
   ctx.restore();
+}
+
+
+
+
+/* ==========================================================================
+   Drawing the new level kinds, and the twists
+   ========================================================================== */
+
+/* --- darkness, for the night levels ------------------------------------- */
+let nightLayer = null;
+
+function drawDarkness() {
+  if (!twist('dark')) return;
+
+  /* Built on its own canvas so the holes can be punched out of the darkness
+     without erasing the game underneath it. */
+  if (!nightLayer) {
+    nightLayer = document.createElement('canvas');
+  }
+  if (nightLayer.width !== WIDTH || nightLayer.height !== HEIGHT) {
+    nightLayer.width = WIDTH;
+    nightLayer.height = HEIGHT;
+  }
+  const n = nightLayer.getContext('2d');
+
+  n.setTransform(1, 0, 0, 1, 0, 0);
+  n.globalCompositeOperation = 'source-over';
+  n.clearRect(0, 0, WIDTH, HEIGHT);
+  n.fillStyle = `rgba(0,0,6,${TWISTS.darkness})`;
+  n.fillRect(0, GRID, WIDTH, HEIGHT - GRID * 2);
+
+  /* Now cut the light out of it. */
+  n.globalCompositeOperation = 'destination-out';
+
+  const hole = (cx, cy, r, strength) => {
+    if (r <= 0) return;
+    const g = n.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(0,0,0,${strength})`);
+    g.addColorStop(0.55, `rgba(0,0,0,${strength * 0.65})`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    n.fillStyle = g;
+    n.beginPath();
+    n.arc(cx, cy, r, 0, Math.PI * 2);
+    n.fill();
+  };
+
+  /* What the frog can see. */
+  if (game.frog) {
+    hole(game.frog.x + GRID / 2, laneY(game.frog.row) + GRID / 2,
+         GRID * TWISTS.lampRadius, 1);
+  }
+
+  /* Headlights, thrown the way each vehicle is going. */
+  for (const lane of lanes) {
+    if (lane.type !== 'road' || !lane.active) continue;
+    const y = laneY(lane.row) + GRID / 2;
+    for (const ob of lane.obstacles) {
+      if (ob.deadUntil > game.time) continue;
+      if (ob.x > WIDTH + GRID || ob.x + ob.cells * GRID < -GRID) continue;
+      const nose = ob.vx > 0 ? ob.x + ob.cells * GRID : ob.x;
+      hole(nose + Math.sign(ob.vx) * GRID * TWISTS.headlampReach * 0.45, y,
+           GRID * TWISTS.headlampReach * 0.75, 0.85);
+    }
+  }
+
+  ctx.drawImage(nightLayer, 0, 0, WIDTH, HEIGHT);
+}
+
+/* --- ghosts drifting about the boneyard --------------------------------- */
+const ghosts = [];
+
+function updateGhosts(dt) {
+  if (!twist('ghost')) { ghosts.length = 0; return; }
+  while (ghosts.length < TWISTS.ghostCount) {
+    ghosts.push({
+      x: rng() * WIDTH,
+      y: GRID + rng() * (HEIGHT - GRID * 2),
+      vx: (rng() - 0.5) * 26,
+      vy: (rng() - 0.5) * 18,
+      phase: rng() * 6.28,
+    });
+  }
+  for (const g of ghosts) {
+    g.x += g.vx * dt;
+    g.y += g.vy * dt;
+    if (g.x < -GRID) g.x = WIDTH;
+    if (g.x > WIDTH) g.x = -GRID;
+    if (g.y < GRID) g.y = HEIGHT - GRID * 2;
+    if (g.y > HEIGHT - GRID) g.y = GRID;
+  }
+}
+
+function drawGhosts() {
+  if (!twist('ghost')) return;
+  const art = Art.of('ghost');
+  for (const g of ghosts) {
+    const bob = Math.sin(game.time * 1.6 + g.phase) * GRID * 0.12;
+    /* Faint, but they have to actually be noticeable or there is no point. */
+    const fade = 0.22 + 0.12 * Math.abs(Math.sin(game.time * 0.9 + g.phase));
+    drawArt(ctx, art, g.x, g.y + bob, GRID * 1.25, GRID * 1.25,
+            { cells: 1, alpha: fade, time: game.time });
+  }
+}
+
+/* --- a starfield, for the space environment ----------------------------- */
+const stars = [];
+
+function drawStars() {
+  if (!Art.environment().stars) return;
+  if (!stars.length) {
+    for (let i = 0; i < 70; i++) {
+      stars.push({ x: rng() * WIDTH, y: GRID + rng() * (HEIGHT - GRID * 2),
+                   s: 1 + rng() * 2, tw: rng() * 6.28 });
+    }
+  }
+  for (const st of stars) {
+    ctx.globalAlpha = 0.35 + 0.4 * Math.abs(Math.sin(game.time * 1.5 + st.tw));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(st.x, st.y, st.s, st.s);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* --- the rocket -------------------------------------------------------- */
+function drawRocket() {
+  /* Exhaust. */
+  for (const t of rocket.trail) {
+    const age = game.time - t.at;
+    if (age > 0.5) continue;
+    ctx.globalAlpha = Math.max(0, 1 - age / 0.5) * 0.8;
+    ctx.fillStyle = age < 0.14 ? '#ffe070' : age < 0.3 ? '#ff8a30' : '#8a8a8a';
+    const sz = 3 + age * 26;
+    ctx.fillRect(t.x - sz / 2, t.y - sz / 2, sz, sz);
+  }
+  ctx.globalAlpha = 1;
+
+  drawArt(ctx, Art.of('rocket'), rocket.x, rocket.y, GRID, GRID,
+          { cells: 1, time: game.time });
+
+  /* A wind gauge, because guessing would just be annoying. */
+  if (!rocket.flying) {
+    const cx = WIDTH / 2;
+    const y = laneY(START_ROW) - GRID * 0.75;
+    const w = GRID * 3;
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(cx - w / 2, y, w, GRID * 0.16);
+    const f = rocket.wind / ROCKET.wind;
+    ctx.fillStyle = Art.color('accent');
+    ctx.fillRect(cx, y, (w / 2) * f, GRID * 0.16);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = Art.color('textDim');
+    ctx.font = `bold ${Math.round(GRID * 0.24)}px "Courier New", monospace`;
+    ctx.fillText('WIND', cx, y - GRID * 0.22);
+
+    /* And a dotted line up from where you are standing. */
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 8]);
+    ctx.beginPath();
+    ctx.moveTo(rocket.x + GRID / 2, rocket.y);
+    ctx.lineTo(rocket.x + GRID / 2, laneY(0) + GRID);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawRocketHud() {
+  const font = (px) => `bold ${Math.round(px)}px "Courier New", monospace`;
+  const y = HEIGHT - GRID;
+  ctx.fillStyle = Art.color('hudBg');
+  ctx.fillRect(0, y, WIDTH, GRID);
+  ctx.textBaseline = 'middle';
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.28);
+  ctx.fillText('ROCKETS', 10, y + GRID * 0.3);
+  ctx.fillStyle = '#fff';
+  ctx.font = font(GRID * 0.38);
+  ctx.fillText('x' + rocket.attemptsLeft, 10, y + GRID * 0.7);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.28);
+  ctx.fillText('LANDED', WIDTH - 10, y + GRID * 0.3);
+  ctx.fillStyle = Art.color('accent');
+  ctx.font = font(GRID * 0.38);
+  ctx.fillText(String(rocket.landed), WIDTH - 10, y + GRID * 0.7);
+
+  if (game.time - rocket.outcomeAt < 1.4) {
+    ctx.globalAlpha = Math.max(0, 1 - (game.time - rocket.outcomeAt) / 1.4);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.font = font(GRID * 0.44);
+    ctx.fillText(rocket.outcome, WIDTH / 2, HEIGHT / 2);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* --- the helicopter ---------------------------------------------------- */
+function drawHeli() {
+  for (const b of heli.bullets) {
+    drawArt(ctx, Art.of('bullet'), b.x - GRID * 0.25, b.y - GRID * 0.25,
+            GRID * 0.5, GRID * 0.5, { cells: 1, time: game.time });
+  }
+
+  /* A shadow on the ground, so it reads as flying rather than driving. */
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(heli.x + TRUCK_SIZE / 2, heli.y + TRUCK_SIZE * 0.92,
+              TRUCK_SIZE * 0.34, TRUCK_SIZE * 0.12, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  const bob = Math.sin(game.time * 7) * GRID * 0.06;
+  drawArt(ctx, Art.of('helicopter'), heli.x, heli.y + bob, TRUCK_SIZE, TRUCK_SIZE,
+          { cells: 1, dir: heli.aim[0], time: game.time });
+}
+
+function drawHeliHud() {
+  const font = (px) => `bold ${Math.round(px)}px "Courier New", monospace`;
+  ctx.fillStyle = Art.color('hudBg');
+  ctx.fillRect(0, 0, WIDTH, GRID);
+  ctx.textBaseline = 'middle';
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.3);
+  ctx.fillText('1-UP', 10, GRID * 0.28);
+  ctx.fillStyle = '#fff';
+  ctx.font = font(GRID * 0.38);
+  ctx.fillText(String(game.score).padStart(5, '0'), 10, GRID * 0.7);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = Art.color('accent');
+  ctx.font = font(GRID * 0.3);
+  ctx.fillText('AIR SUPPORT', WIDTH / 2, GRID * 0.28);
+  ctx.font = font(GRID * 0.42);
+  ctx.fillText('+' + bonus.points, WIDTH / 2, GRID * 0.72);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = Art.color('textDim');
+  ctx.font = font(GRID * 0.3);
+  ctx.fillText('DESTROYED', WIDTH - 10, GRID * 0.28);
+  ctx.fillStyle = '#fff';
+  ctx.font = font(GRID * 0.42);
+  ctx.fillText(String(bonus.smashed), WIDTH - 10, GRID * 0.72);
+
+  const y = HEIGHT - GRID;
+  ctx.fillStyle = Art.color('hudBg');
+  ctx.fillRect(0, y, WIDTH, GRID);
+  const frac = Math.max(0, heli.timeLeft / HELI.duration);
+  const barW = WIDTH - GRID * 2.6, barH = GRID * 0.34;
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fillRect(GRID * 1.3, y + (GRID - barH) / 2, barW, barH);
+  ctx.fillStyle = frac < 0.25 ? Art.color('timeLow') : Art.color('accent');
+  ctx.fillRect(GRID * 1.3, y + (GRID - barH) / 2, barW * frac, barH);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#000';
+  ctx.font = font(GRID * 0.26);
+  ctx.fillText(Math.ceil(heli.timeLeft) + 's', WIDTH / 2, y + GRID * 0.5);
 }
 
 
@@ -1844,7 +2660,7 @@ function drawOverlay() {
   const cx = WIDTH / 2;
   const cy = HEIGHT / 2;
 
-  const panelH = showing === 'title' ? GRID * 9.4
+  const panelH = showing === 'title' ? GRID * 11.2
                : showing === 'gameOver' ? GRID * 6
                : GRID * 3.6;
   const panelW = WIDTH - GRID * 0.6;
@@ -1875,35 +2691,33 @@ function drawOverlay() {
 
     case 'title': {
       big(); ctx.fillStyle = '#fff';
-      ctx.fillText('FROGGER', cx, cy - GRID * 2.4);
+      ctx.fillText('FROGGER', cx, cy - GRID * 3.6);
 
       const bob = Math.sin(game.time * 2.2) * GRID * 0.06;
-      const s = GRID * 1.6;
-      drawArt(ctx, Art.of('frog'), cx - s / 2, cy - GRID * 1.55 + bob, s, s,
+      const s = GRID * 1.05;
+      drawArt(ctx, Art.of('frog'), cx - s / 2, cy - GRID * 3.05 + bob, s, s,
               { cells: 1, time: game.time });
-
-      const need = Math.max(1, Math.min(CONFIG.baysToClear, CONFIG.homeCols.length));
-      mid(); ctx.fillStyle = Art.color('text');
-      ctx.fillText(need === 1 ? 'GET A FROG HOME'
-                              : `GET ${need} FROGS HOME`, cx, cy + GRID * 0.55);
 
       /* --- the mode picker --- */
       const m = mode();
       mid(); ctx.fillStyle = Art.color('accent');
-      ctx.fillText(`\u25c0   ${m.label}   \u25b6`, cx, cy + GRID * 1.3);
+      ctx.fillText(`\u25c0  ${m.label}  \u25b6`, cx, cy - GRID * 1.95);
       small(); ctx.fillStyle = Art.color('textDim');
-      ctx.fillText(m.blurb, cx, cy + GRID * 1.78);
+      ctx.fillText(m.blurb, cx, cy - GRID * 1.52);
+
+      /* --- the level picker. It draws its own environment label. --- */
+      drawLevelList(cx, cy + GRID * 0.45);
 
       small(); ctx.fillStyle = Art.color('textDim');
-      ctx.fillText('cars squash you  ::  you must RIDE the logs and turtles',
-                   cx, cy + GRID * 2.4);
-      ctx.fillText('arrows or WASD  ::  P pause  ::  N new game', cx, cy + GRID * 2.82);
+      ctx.fillText('up / down pick a level  ::  left / right pick a mode',
+                   cx, cy + GRID * 3.0);
       ctx.fillStyle = Art.color('accent');
-      ctx.fillText('R music  ::  M mute  ::  C colours', cx, cy + GRID * 3.24);
+      ctx.fillText('R music  ::  M mute  ::  C colours  ::  P pause',
+                   cx, cy + GRID * 3.4);
 
       if (Math.floor(game.time * 1.6) % 2 === 0) {
         mid(); ctx.fillStyle = '#fff';
-        ctx.fillText('PRESS SPACE TO START', cx, cy + GRID * 3.95);
+        ctx.fillText('PRESS SPACE TO START', cx, cy + GRID * 4.1);
       }
       break;
     }
@@ -1940,6 +2754,98 @@ function drawOverlay() {
   }
 }
 
+/* --------------------------------------------------------------------------
+   The level list on the title screen.
+
+   Everything is unlocked. The point of it is being able to jump straight to
+   any level to play or test it, and locking things would defeat that.
+   -------------------------------------------------------------------------- */
+
+const KIND_TAG = {
+  cross:  '',
+  truck:  'BONUS',
+  heli:   'BONUS',
+  rocket: 'BONUS',
+  boat:   'BOSS',
+};
+
+const TWIST_TAG = { ice: 'ICE', dark: 'DARK', ghost: 'GHOST' };
+
+function levelTag(p) {
+  const tags = [];
+  if (KIND_TAG[p.kind]) tags.push(KIND_TAG[p.kind]);
+  if (p.rules) {
+    for (const k of Object.keys(p.rules)) {
+      if (p.rules[k] && TWIST_TAG[k]) tags.push(TWIST_TAG[k]);
+    }
+  }
+  return tags.join(' ');
+}
+
+function clampPickedLevel() {
+  const n = LEVELS.length || 1;
+  game.pickedLevel = Math.max(1, Math.min(n, game.pickedLevel || 1));
+}
+
+function drawLevelList(cx, cy) {
+  clampPickedLevel();
+  /* Whatever they are pointing at, get its music ready. */
+  const wanted = Music.trackForLevel(planFor(game.pickedLevel));
+  if (wanted) Music.prefetch(wanted);
+  const total = LEVELS.length;
+  const rows = Math.min(5, total);
+  const rowH = GRID * 0.62;
+
+  /* Keep the choice roughly in the middle of the window. */
+  let top = game.pickedLevel - 1 - Math.floor(rows / 2);
+  top = Math.max(0, Math.min(total - rows, top));
+
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i < rows; i++) {
+    const n = top + i + 1;
+    const p = planFor(n);
+    const y = cy - ((rows - 1) / 2) * rowH + i * rowH;
+    const picked = n === game.pickedLevel;
+
+    if (picked) {
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      roundRect(ctx, cx - WIDTH * 0.42, y - rowH * 0.46,
+                WIDTH * 0.84, rowH * 0.92, 5);
+      ctx.fill();
+    }
+
+    ctx.font = `bold ${Math.round(GRID * 0.3)}px "Courier New", monospace`;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = picked ? '#fff' : Art.color('textDim');
+    ctx.fillText(String(n).padStart(2, ' '), cx - WIDTH * 0.39, y);
+    ctx.fillText(p.name, cx - WIDTH * 0.31, y);
+
+    const tag = levelTag(p);
+    if (tag) {
+      ctx.textAlign = 'right';
+      ctx.font = `bold ${Math.round(GRID * 0.24)}px "Courier New", monospace`;
+      ctx.fillStyle = picked ? Art.color('accent') : Art.color('textDim');
+      ctx.fillText(tag, cx + WIDTH * 0.39, y);
+    }
+  }
+
+  /* Little arrows so it is obvious the list scrolls. */
+  ctx.textAlign = 'center';
+  ctx.font = `${Math.round(GRID * 0.26)}px "Courier New", monospace`;
+  ctx.fillStyle = Art.color('textDim');
+  const edge = (rows / 2) * rowH;
+  if (top > 0) ctx.fillText('\u25b2', cx, cy - edge - GRID * 0.2);
+  if (top + rows < total) ctx.fillText('\u25bc', cx, cy + edge + GRID * 0.2);
+
+  /* Where you are about to play it. */
+  const p = planFor(game.pickedLevel);
+  const env = (ENVIRONMENTS[p.env] || {}).label || '';
+  ctx.font = `bold ${Math.round(GRID * 0.26)}px "Courier New", monospace`;
+  ctx.fillStyle = Art.color('accent');
+  ctx.fillText(env, cx, cy + edge + GRID * 0.72);
+}
+
 /* Tell the player what is new about the level they are walking into. Half
    the fun of the arcade was the moment a new hazard showed up. */
 function nextLevelWarning(level) {
@@ -1971,16 +2877,25 @@ function loop(now) {
   if (!game.paused) update(dt);
   else game.time += dt;
 
+  updateGhosts(dt);
+
   /* Shake and flash are drawn in every state, so they have to fade in every
      state too. */
   bonus.shake = Math.max(0, bonus.shake - dt * 40);
   bonus.flash = Math.max(0, bonus.flash - dt * 3.5);
 
-  /* Revs follow the pedal. Off the pedal it drops back to a lumpy idle. */
+  /* Revs follow whatever the player is doing, which differs per machine:
+     the truck and the helicopter answer to the controls, the rocket is either
+     sitting on the pad or going flat out. */
   if (Engine.running) {
-    const canDrive = game.state === 'bonus' && !game.paused;
-    const pedal = canDrive &&
-      (held.left || held.right || held.up || held.down) ? 1 : 0;
+    const moving = held.left || held.right || held.up || held.down;
+    let pedal = 0;
+    if (!game.paused) {
+      if (game.state === 'bonus') pedal = moving ? 1 : 0;
+      else if (game.state === 'heli') pedal = moving ? 1 : 0.45;  /* rotor never rests */
+      else if (game.state === 'rocket') pedal = rocket.flying ? 1 : 0.12;
+      else if (game.state === 'heliIntro') pedal = 0.3;
+    }
     Engine.setThrottle(pedal);
   }
 
@@ -1989,6 +2904,17 @@ function loop(now) {
 
 sizeCanvas();
 window.addEventListener('resize', sizeCanvas);
+
+/* Lay out level one so the title screen has a real board behind it. */
+game.pickedLevel = 1;
+applyPlan();
+
+/* Start pulling the music down straight away. fetch() is not blocked by the
+   autoplay rules, so by the time the player presses a key the opening track is
+   already in memory and starts instantly. */
+Music.restorePreferences();
+Music.warmUp();
+
 requestAnimationFrame(loop);
 
 /* For poking at the game from the browser console, and for the tests. */
@@ -1996,6 +2922,11 @@ window.frogger = {
   game, lanes, CONFIG, PROGRESSION, SPRITES, PALETTE, THEMES, PALETTES,
   Music, Art, notify, TRACKS, DEATH_HINTS, overlayFor,
   MODES, BONUS, bonus, mode, setting, rule, cycleMode, isBonusLevel, Engine, ENGINE,
+  LEVELS, ENVIRONMENTS, MUSIC, planFor, lapsFor, plan, levelKind, levelName,
+  hazard, twist, applyPlan, enterLevel, buildObstacles, trafficRows,
+  rocket, heli, startRocket, startHeli, updateRocket, updateHeli, ROCKET, HELI,
+  TWISTS, RIVER_PRESETS, LEVEL_LOOP, levelTag, clampPickedLevel, ghosts,
+  ENGINE_PROFILES, SOUNDS, PALETTES, engineProfileFor,
   advanceLevel, startBonusRound, inBonus, held, smashableLanes,
   startGame, startLevel, hop, laneY, diveState, speedMultiplier,
   WIDTH, HEIGHT, GRID, COLS, NLANES,

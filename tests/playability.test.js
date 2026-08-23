@@ -17,8 +17,19 @@
 
 import { load } from "./harness.js";
 
-const { api, frames, key } = await load();
+const { api, frames, key, holdKey } = await load();
 const { game, lanes, CONFIG, PROGRESSION, GRID, COLS, WIDTH, NLANES } = api;
+
+/* The bot plays the ordinary crossing levels. The special ones (monster truck,
+   rocket, helicopter) are not a crossing at all and are covered by the
+   mechanics suite instead, so the bot sits them out. */
+const CROSS_LEVELS = api.LEVELS
+  .map((l, i) => (l.kind === "cross" ? i + 1 : 0))
+  .filter(Boolean);
+
+const SPECIAL_STATES = ["bonusIntro", "bonus", "bonusResults",
+                        "heliIntro", "heli", "heliResults",
+                        "rocketIntro", "rocket", "rocketResults"];
 
 const DT = 1 / 60;
 
@@ -44,7 +55,10 @@ function divePhaseAt(lane, ob, ahead = 0) {
 
 /* Would standing at x in this road lane be safe for the next `n` frames? */
 function roadSafeFor(lane, x, n) {
-  if (game.level < lane.fromLevel) return true;
+  /* A lane the level has switched off still has obstacles sitting in it, they
+     just do not move and cannot hurt you. Treating it as dangerous would make
+     the bot refuse to cross an empty road. */
+  if (!lane.active) return true;
   const frogL = x + 7, frogR = x + GRID - 7;
   for (const ob of lane.obstacles) {
     for (let f = 0; f <= n; f += 2) {
@@ -242,6 +256,16 @@ function play(maxFrames) {
       continue;
     }
 
+    /* Sit out anything that is not a crossing. */
+    if (SPECIAL_STATES.includes(game.state)) {
+      if (game.state === "bonus") api.bonus.timeLeft = 0.02;
+      if (game.state === "heli") api.heli.timeLeft = 0.02;
+      if (game.state === "rocket") api.rocket.attemptsLeft = 0;
+      game.stateTime = 99;
+      frames(1);
+      continue;
+    }
+
     if (game.state === "play" && cooldown <= 0) {
       const [dx, dy] = decide();
       if (dx || dy) {
@@ -297,7 +321,9 @@ function check(name, cond, extra = "") {
    -------------------------------------------------------------------------- */
 console.log("\n== every river row is always crossable ==");
 
-api.startGame();
+/* Check it on the tightest river the plan ever asks for. */
+const tightest = CROSS_LEVELS.filter(n => api.LEVELS[n - 1].river === "tight");
+api.startGame(tightest.length ? tightest[tightest.length - 1] : CROSS_LEVELS[CROSS_LEVELS.length - 1]);
 frames(1);
 game.frog.row = 6;
 game.timeLeft = 1e9;
@@ -327,93 +353,56 @@ riverRows.forEach((lane, i) => {
 /* --------------------------------------------------------------------------
    2. A sensible bot can actually get frogs home.
    -------------------------------------------------------------------------- */
-console.log("\n== the bot can play level 1 ==");
-api.startGame();
+console.log("\n== level one should be a walk in the park ==");
+api.startGame(1);
 frames(1);
-const lvl1 = play(9000);
+const lvl1 = play(6000);
 console.log(`     homes=${lvl1.homes} deaths=${lvl1.deaths} levels=${lvl1.levels}`);
 console.log(`     deaths by reason: ${JSON.stringify(lvl1.byReason)}`);
-console.log(`     deaths by row:    ${JSON.stringify(lvl1.byRow)}`);
 
-check("the bot gets frogs home on level 1", lvl1.homes >= 5, `only ${lvl1.homes}`);
-check("the bot clears at least one level", lvl1.levels >= 1, `${lvl1.levels}`);
-check("the bot is not dying constantly", lvl1.deaths <= lvl1.homes * 2,
-  `${lvl1.deaths} deaths for ${lvl1.homes} homes`);
-check("no single row accounts for most deaths",
-  Object.values(lvl1.byRow).every((n) => n <= Math.max(3, lvl1.deaths * 0.6)),
+/* One frog clears a level, so a clean run shows up as "a home and a level"
+   over and over rather than a big pile of frogs. */
+check("the bot gets frogs home", lvl1.homes >= 2, `only ${lvl1.homes}`);
+check("and clears levels back to back", lvl1.levels >= 2, `${lvl1.levels}`);
+check("without dying, because level one is meant to be free",
+  lvl1.deaths <= 1, `${lvl1.deaths} deaths`);
+check("no single row is a death trap",
+  Object.values(lvl1.byRow).every((n) => n <= Math.max(3, lvl1.deaths * 0.7)),
   JSON.stringify(lvl1.byRow));
 
-/* --------------------------------------------------------------------------
-   3. The later levels are harder, but still possible.
-   -------------------------------------------------------------------------- */
-console.log("\n== the later levels stay possible ==");
-for (const level of [3, 5, 8]) {
-  api.startGame();
-  game.level = level;
-  api.startLevel();
+console.log("\n== the difficulty curve actually curves ==");
+const runs = [];
+for (const n of [CROSS_LEVELS[0], CROSS_LEVELS[Math.floor(CROSS_LEVELS.length / 2)],
+                 CROSS_LEVELS[CROSS_LEVELS.length - 1]]) {
+  api.startGame(n);
   frames(1);
-  const s = play(7000);
-  console.log(`     level ${level}: homes=${s.homes} deaths=${s.deaths} ` +
-              `reasons=${JSON.stringify(s.byReason)}`);
-  check(`level ${level} is still crossable`, s.homes >= 3, `only ${s.homes} homes`);
+  const r = play(5000);
+  runs.push({ n, name: api.levelName(n), ...r });
+  console.log(`     level ${n} ${api.levelName(n)}: homes=${r.homes} deaths=${r.deaths} ` +
+              `reasons=${JSON.stringify(r.byReason)}`);
 }
+check("the early level is kinder than the late one",
+  runs[0].deaths <= runs[runs.length - 1].deaths,
+  `${runs[0].deaths} vs ${runs[runs.length - 1].deaths}`);
+check("even the hardest level is still winnable",
+  runs[runs.length - 1].homes >= 2, `only ${runs[runs.length - 1].homes}`);
 
 /* --------------------------------------------------------------------------
-   4. Difficulty really does go up.
+   Every crossing level has to be finishable. This is the sweep that would
+   catch a level plan entry that reads fine but is quietly impossible.
    -------------------------------------------------------------------------- */
-console.log("\n== difficulty scales ==");
-const speeds = [];
-for (let l = 1; l <= 12; l++) { game.level = l; speeds.push(api.speedMultiplier()); }
-console.log("     speed by level: " + speeds.map((s) => s.toFixed(2)).join(" "));
-
-check("level 2 is faster than level 1", speeds[1] > speeds[0]);
-check("level 5 is much faster than level 1", speeds[4] > speeds[0] * 1.3);
-check("level 6 eases off after the level 5 peak", speeds[5] < speeds[4],
-  `${speeds[5].toFixed(2)} vs ${speeds[4].toFixed(2)}`);
-check("level 10 is still harder than level 5", speeds[9] > speeds[4]);
-check("speed never runs away", speeds[11] < 3);
-
-game.level = 1;
-
-/* --------------------------------------------------------------------------
-   5. Hazards arrive on schedule.
-   -------------------------------------------------------------------------- */
-console.log("\n== hazards arrive on schedule ==");
-function hazardsAt(level) {
-  api.startGame();
-  game.level = level;
-  api.startLevel();
+console.log("\n== every crossing level is crossable ==");
+for (const level of CROSS_LEVELS) {
+  api.startGame(level);
   frames(1);
-  game.frog.row = 6;
-  game.timeLeft = 1e9;
-
-  const seen = { snake: false, gator: false, croc: false, fly: false, lady: false };
-  for (let f = 0; f < 4200; f++) {
-    frames(1);
-    for (const lane of lanes) {
-      if (lane.kind === "snake" && game.level >= lane.fromLevel) seen.snake = true;
-      for (const ob of lane.obstacles) if (ob.variant === "gator") seen.gator = true;
-    }
-    if (game.bayHazard) seen[game.bayHazard.kind === "croc" ? "croc" : "fly"] = true;
-    if (game.lady) seen.lady = true;
-  }
-  return seen;
+  const r = play(4500);
+  const twists = Object.keys(api.LEVELS[level - 1].rules || {}).join("+") || "-";
+  console.log(`     ${String(level).padStart(2)} ${api.levelName(level).padEnd(17)}` +
+              `[${twists.padEnd(5)}] homes=${r.homes} deaths=${r.deaths}`);
+  check(`level ${level} (${api.levelName(level)}) is crossable`, r.homes >= 1,
+    `no frogs home. deaths: ${JSON.stringify(r.byReason)}`);
 }
-
-const l1 = hazardsAt(1);
-check("no snakes on level 1", !l1.snake);
-check("no crocodiles in the river on level 1", !l1.gator);
-check("no crocodile in the lilypads on level 1", !l1.croc);
-check("flies appear from level 1", l1.fly);
-
-const l2 = hazardsAt(2);
-check("the lady frog appears from level 2", l2.lady);
-check("a crocodile can lurk in a lilypad from level 2", l2.croc);
-check("still no snakes on level 2", !l2.snake);
-
-const l3 = hazardsAt(3);
-check("snakes appear on level 3", l3.snake);
-check("crocodiles appear in the river on level 3", l3.gator);
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
+
 if (fail) Deno.exit(1);

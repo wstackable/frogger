@@ -214,6 +214,64 @@ Things to try:
 The truck and the boats are pixel art like everything else, in
 `js/sprites.js` under `monsterTruck` and `boat`. Draw the kids' own truck.
 
+## Level 3f: rewrite the whole run
+
+`LEVELS` in `js/config.js` is the entire game, one line per level. This is the
+most powerful thing in the file.
+
+```js
+{ name: 'First Hop', kind: 'cross', env: 'pond',
+  speed: 0.62, roadLanes: 2, river: 'wide', hazards: [] },
+```
+
+- **`name`** what it is called in the level selector
+- **`kind`** `'cross'` a normal crossing, `'truck'` the monster truck,
+  `'heli'` the helicopter, `'rocket'` the rocket, `'boat'` the boss
+- **`env`** which environment from `ENVIRONMENTS`
+- **`speed`** everything moves this much faster. 0.62 is a stroll, 1.4 is nasty.
+- **`roadLanes`** how many lanes of traffic are switched on, counting up from
+  the start line. The rest of the road is empty, which is harmless.
+- **`river`** `'wide'`, `'easy'`, `'normal'` or `'tight'`. How long the logs are
+  and how big the gaps between them are.
+- **`hazards`** any of `'fly'`, `'lady'`, `'bayCroc'`, `'snake'`, `'gator'`,
+  `'diving'`
+- **`rules`** `{ ice: true }`, `{ dark: true }` or `{ ghost: true }`
+- **`music`** claim a track for this level
+
+> **Why the river never empties.** An empty road row is harmless, so that is how
+> early levels get easier. An empty *river* row would drown you, so the river
+> gets kinder by having longer logs and smaller gaps instead. That is what
+> `river: 'wide'` does.
+
+Things to try:
+
+- **Reorder them.** Drag the boneyard to level 2 and see their faces.
+- **`speed: 0.4`** on everything for a five year old.
+- **A run of nothing but bonus levels**, for a silly ten minutes.
+- **Your own level:** copy a line, name it after one of the kids, and give it
+  a twist and an environment nobody else has.
+
+Press up and down on the title screen to jump straight to any of them, so you
+never have to play through to reach the one you are working on.
+
+## Level 3g: add an environment
+
+`ENVIRONMENTS` in `js/config.js`. Each one recolours the whole board.
+
+```js
+arctic: {
+  label: 'ARCTIC',
+  bg:     { water: '#123a5a', road: '#2a3340', grass: '#e8f4ff' },
+  pixels: { G: '#8ff0ff', B: '#dff0ff' },   // recolour the pixel art
+  art:    { log: 'iceFloe' },               // or swap the picture entirely
+},
+```
+
+`art` is the interesting one: it keeps *how* a thing is drawn (tiled, mirrored,
+end caps) and changes only the picture, so an ice floe still tiles like a log.
+Draw a new sprite in `js/sprites.js`, point `art` at it, and the arctic has its
+own scenery.
+
 ## Level 4: make it easier, or brutal
 
 Top of `js/config.js`:

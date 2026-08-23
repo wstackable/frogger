@@ -25,26 +25,68 @@ const Art = {
     return chosen;
   },
 
-  /* The art for a kind, e.g. Art.of('car'). Falls back to the arcade theme
-     so a half-finished custom theme still draws something. */
+  /* The art for a kind, e.g. Art.of('car'). An environment can swap one
+     picture for another, which is how the arctic gets ice floes instead of
+     logs without a whole new theme. */
   of(kind) {
+    const swap = this._envArt && this._envArt[kind];
+    if (swap) {
+      const theme = this.theme();
+      const base = (theme.art && theme.art[kind]) || THEMES.arcade.art[kind];
+      /* Keep how it is drawn (tiled, mirrored, end caps) and change only the
+         picture, so a swapped log still tiles like a log. */
+      if (base && base.draw === 'pixels') {
+        return { ...base, sprite: swap, capLeft: null, capRight: null,
+                 fit: base.fit || 'repeat' };
+      }
+    }
     const theme = this.theme();
     return (theme.art && theme.art[kind]) || THEMES.arcade.art[kind] || null;
   },
 
-  /* A background colour, e.g. Art.color('water'). A palette chosen with C
-     wins over the theme's own colours. */
+  /* A background colour, e.g. Art.color('water').
+
+     Three layers, most specific first: a palette the player chose with C, then
+     the level's environment, then the theme itself. */
   color(name) {
     if (this._bgOverride && this._bgOverride[name]) return this._bgOverride[name];
+    if (this._envBg && this._envBg[name]) return this._envBg[name];
     const theme = this.theme();
     return (theme.palette && theme.palette[name]) ||
            THEMES.arcade.palette[name] || '#ff00ff';
   },
 
-  /* What colour one letter of pixel art means right now. */
+  /* What colour one letter of pixel art means right now. Same three layers. */
   pixel(ch) {
     if (this._pxOverride && this._pxOverride[ch]) return this._pxOverride[ch];
+    if (this._envPx && this._envPx[ch]) return this._envPx[ch];
     return PALETTE[ch];
+  },
+
+  /* --- Environments, set by whichever level is running ------------------ */
+
+  _envName: null,
+  _envBg: null,
+  _envPx: null,
+  _envArt: null,
+
+  setEnvironment(name) {
+    if (this._envName === name) return;
+    const env = (typeof ENVIRONMENTS !== 'undefined' && ENVIRONMENTS[name]) || null;
+    if (!env && name) console.warn(`[frogger] No environment called "${name}".`);
+    this._envName = name || null;
+    this._envBg = (env && env.bg) || null;
+    this._envPx = (env && env.pixels) || null;
+    this._envArt = (env && env.art) || null;
+    this._tiles = {};          /* colours and pictures both changed */
+  },
+
+  environment() {
+    return (typeof ENVIRONMENTS !== 'undefined' && ENVIRONMENTS[this._envName]) || {};
+  },
+
+  environmentLabel() {
+    return this.environment().label || '';
   },
 
   /* --- Colour palettes, cycled with C ---------------------------------- */
@@ -62,6 +104,7 @@ const Art = {
     const list = this.palettes();
     this._paletteIndex = ((i % list.length) + list.length) % list.length;
     const p = list[this._paletteIndex];
+    /* Position 0 has no overrides, which means "let the level decide". */
     this._bgOverride = p.bg || null;
     this._pxOverride = p.pixels || null;
     this._tiles = {};          /* the cached sprites are the wrong colour now */

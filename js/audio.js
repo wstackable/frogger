@@ -19,9 +19,14 @@ const SOUNDS = {
   pickup: { wave: 'triangle', steps: [[780, 0.06], [1040, 0.10]],                  gain: 0.14 },
 
   /* --- the bonus round --- */
-  smash:    { wave: 'sawtooth', steps: [[190, 0.05], [95, 0.09]],                  gain: 0.20 },
-  bigsmash: { wave: 'square',   steps: [[300,0.04],[170,0.05],[90,0.13]],           gain: 0.24 },
+  smash:    { wave: 'sawtooth', steps: [[190, 0.05], [95, 0.09]],  gain: 0.20, crunch: 0.22 },
+  bigsmash: { wave: 'square',   steps: [[300,0.04],[170,0.05],[90,0.13]], gain: 0.24, crunch: 0.38 },
+  explode:  { wave: 'sawtooth', steps: [[240,0.05],[120,0.08],[60,0.16]], gain: 0.22, crunch: 0.45 },
+  launch:   { wave: 'sawtooth', steps: [[60,0.10],[120,0.12],[240,0.14],[420,0.30]],
+              gain: 0.24, crunch: 0.55 },
+  splash:   { wave: 'sine',     steps: [[420,0.05],[260,0.08],[150,0.14]], gain: 0.18, crunch: 0.30 },
   bonus:    { wave: 'square',   steps: [[520,0.09],[660,0.09],[880,0.09],[1320,0.26]], gain: 0.18 },
+  shot:     { wave: 'square',   steps: [[880, 0.02], [420, 0.03]],              gain: 0.07 },
   fanfare:  { wave: 'triangle', steps: [[660,0.10],[880,0.10],[1100,0.10],[1320,0.10],[1760,0.34]], gain: 0.18 },
 };
 
@@ -53,6 +58,10 @@ const Sound = {
     const ctx = this._context();
     if (!ctx) return;
 
+    /* Impacts get a burst of noise under the tone. A bare oscillator sounds
+       like a beep; the noise is what makes it sound like something broke. */
+    if (def.crunch) this._noiseBurst(ctx, def.crunch, ctx.currentTime);
+
     let t = ctx.currentTime;
     for (const [freq, dur] of def.steps) {
       const osc = ctx.createOscillator();
@@ -72,6 +81,40 @@ const Sound = {
 
       t += dur;
     }
+  },
+
+  /* A short band-limited noise hit, swept downwards so it reads as an impact
+     rather than a hiss. */
+  _noiseBurst(ctx, level, when) {
+    const frames = Math.floor(ctx.sampleRate * 0.4);
+    if (!this._noise || this._noiseCtx !== ctx) {
+      const buf = ctx.createBuffer(1, frames, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      let seed = 424242;
+      for (let i = 0; i < frames; i++) {
+        seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+        data[i] = (seed / 0x3fffffff) - 1;
+      }
+      this._noise = buf;
+      this._noiseCtx = ctx;
+    }
+
+    const src = ctx.createBufferSource();
+    src.buffer = this._noise;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(4200, when);
+    filter.frequency.exponentialRampToValueAtTime(320, when + 0.22);
+    filter.Q.value = 1.2;
+
+    const amp = ctx.createGain();
+    amp.gain.setValueAtTime(level, when);
+    amp.gain.exponentialRampToValueAtTime(0.0008, when + 0.26);
+
+    src.connect(filter).connect(amp).connect(ctx.destination);
+    src.start(when);
+    src.stop(when + 0.3);
   },
 };
 
@@ -107,18 +150,55 @@ const ENGINE = {
   fullVol: 0.24,
   hissVol: 0.055,
   glide:   0.14,     /* seconds to reach a new throttle setting */
+  wave:    'sawtooth',
+  subWave: 'square',
+};
+
+/* One engine, three machines. Each of these is merged over ENGINE above, so a
+   profile only lists what makes it sound different.
+
+   The trick with all three is the chug rate. A big V8 fires slowly and lumpily;
+   a rotor is a fast rhythmic thwap; a rocket barely chugs at all and is almost
+   entirely noise. Change idleChug and hissVol and you change the machine. */
+const ENGINE_PROFILES = {
+  truck: {},
+
+  helicopter: {
+    idleHz:   30,   fullHz:   52,      /* low, it is the rotor you hear */
+    idleCut: 700,   fullCut: 2600,
+    idleChug: 15,   fullChug:  23,     /* the thwap */
+    idleVol: 0.13,  fullVol:  0.22,
+    hissVol: 0.10,                     /* plenty of air */
+    glide:   0.20,
+    wave: 'triangle', subWave: 'sine',
+  },
+
+  rocket: {
+    idleHz:   58,   fullHz:  180,
+    idleCut: 900,   fullCut: 5200,
+    idleChug:  4,   fullChug:   7,     /* almost no chug: it is a roar */
+    idleVol: 0.09,  fullVol:  0.26,
+    hissVol: 0.30,                     /* mostly noise, like a real one */
+    glide:   0.10,
+    wave: 'sawtooth', subWave: 'sawtooth',
+  },
 };
 
 const Engine = {
   running: false,
+  profile: 'truck',
+  p: ENGINE,
   _ctx: null,
   _nodes: null,
   _revUntil: 0,
 
-  start() {
+  start(profile) {
     if (!CONFIG.sound || this.running) return;
     const ctx = Sound.context();
     if (!ctx) return;
+
+    this.profile = profile || 'truck';
+    this.p = { ...ENGINE, ...(ENGINE_PROFILES[this.profile] || {}) };
 
     const out = ctx.createGain();
     out.gain.value = 1;
@@ -127,22 +207,22 @@ const Engine = {
     /* The rumble, through a lowpass so it is felt more than heard. */
     const cut = ctx.createBiquadFilter();
     cut.type = 'lowpass';
-    cut.frequency.value = ENGINE.idleCut;
+    cut.frequency.value = this.p.idleCut;
     cut.Q.value = 6;
     cut.connect(out);
 
     const amp = ctx.createGain();
-    amp.gain.value = ENGINE.idleVol;
+    amp.gain.value = this.p.idleVol;
     amp.connect(cut);
 
     const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.value = ENGINE.idleHz;
+    osc.type = this.p.wave;
+    osc.frequency.value = this.p.idleHz;
     osc.connect(amp);
 
     const sub = ctx.createOscillator();
-    sub.type = 'square';
-    sub.frequency.value = ENGINE.idleHz / 2;
+    sub.type = this.p.subWave;
+    sub.frequency.value = this.p.idleHz / 2;
     const subAmp = ctx.createGain();
     subAmp.gain.value = 0.5;
     sub.connect(subAmp).connect(amp);
@@ -150,9 +230,9 @@ const Engine = {
     /* The chug. An oscillator wired into a gain's control, not its input. */
     const lfo = ctx.createOscillator();
     lfo.type = 'sine';
-    lfo.frequency.value = ENGINE.idleChug;
+    lfo.frequency.value = this.p.idleChug;
     const lfoDepth = ctx.createGain();
-    lfoDepth.gain.value = ENGINE.idleVol * 0.7;
+    lfoDepth.gain.value = this.p.idleVol * 0.7;
     lfo.connect(lfoDepth).connect(amp.gain);
 
     /* Exhaust. Reuses the noise buffer trick from the drums. */
@@ -204,6 +284,7 @@ const Engine = {
     if (!this.running || !n) return;
     const ctx = this._ctx;
     const now = ctx.currentTime;
+    const P = this.p;
 
     let t = Math.max(0, Math.min(1, throttle));
     /* A kick of revs when you hit something, which fades on its own. */
@@ -217,15 +298,15 @@ const Engine = {
     };
     const mix = (a, b) => a + (b - a) * t;
 
-    to(n.osc.frequency,  mix(ENGINE.idleHz, ENGINE.fullHz), ENGINE.glide);
-    to(n.sub.frequency,  mix(ENGINE.idleHz, ENGINE.fullHz) / 2, ENGINE.glide);
-    to(n.cut.frequency,  mix(ENGINE.idleCut, ENGINE.fullCut), ENGINE.glide);
-    to(n.lfo.frequency,  mix(ENGINE.idleChug, ENGINE.fullChug), ENGINE.glide);
+    to(n.osc.frequency,  mix(P.idleHz, P.fullHz), P.glide);
+    to(n.sub.frequency,  mix(P.idleHz, P.fullHz) / 2, P.glide);
+    to(n.cut.frequency,  mix(P.idleCut, P.fullCut), P.glide);
+    to(n.lfo.frequency,  mix(P.idleChug, P.fullChug), P.glide);
 
-    const vol = mix(ENGINE.idleVol, ENGINE.fullVol);
-    to(n.amp.gain, vol, ENGINE.glide);
-    to(n.lfoDepth.gain, vol * (0.7 - t * 0.45), ENGINE.glide);
-    to(n.hissAmp.gain, ENGINE.hissVol * t * t, ENGINE.glide);
+    const vol = mix(P.idleVol, P.fullVol);
+    to(n.amp.gain, vol, P.glide);
+    to(n.lfoDepth.gain, vol * (0.7 - t * 0.45), P.glide);
+    to(n.hissAmp.gain, P.hissVol * t * t, P.glide);
   },
 
   /* Blip the throttle. Used when the truck flattens something. */

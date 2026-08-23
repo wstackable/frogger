@@ -10,16 +10,25 @@ const { api, tick, frames, key, audio, store } = await load();
 const { game, lanes, CONFIG, PROGRESSION, WIDTH } = api;
 const GRID = CONFIG.grid;
 
-// Lanes are built once at load, so tests that shove obstacles around must put
-// them back or they poison every later test.
-const LANE_SNAPSHOT = lanes.map(l => l.obstacles.map(o => ({ x: o.x, index: o.index })));
-function resetLanes() {
-  lanes.forEach((l, i) => l.obstacles.forEach((o, j) => {
-    o.x = LANE_SNAPSHOT[i][j].x;
-    o.index = LANE_SNAPSHOT[i][j].index;
-  }));
-}
-function reset() { resetLanes(); api.startGame(); frames(1); }
+/* The board is laid out per level now, so putting it back is just asking the
+   level to lay itself out again. No snapshot needed. */
+function resetLanes() { api.applyPlan(); }
+
+/* Most of this suite was written against a fully loaded board: five lanes of
+   traffic, diving turtles, crocodiles, the lot. Under the level plan that is
+   no longer level one, it is whichever level turns everything on. */
+const FULL_LEVEL = (() => {
+  let best = 1, score = -1;
+  api.LEVELS.forEach((l, i) => {
+    if (l.kind !== "cross") return;
+    const n = (l.hazards || []).length * 10 + (l.roadLanes || 0);
+    if (n > score) { score = n; best = i + 1; }
+  });
+  return best;
+})();
+
+function reset(atLevel) { api.startGame(atLevel || FULL_LEVEL); frames(1); }
+function fullBoard() { game.level = FULL_LEVEL; api.applyPlan(); }
 
 /* The suite below was written against the arcade rules: all five lilypads to
    clear a level, and the two harsh deaths switched on. Those are now the
@@ -34,6 +43,12 @@ function relax() { game.mode = DEFAULT_MODE; }
 
 console.log("\n== boot ==");
 frames(1);
+check("a level plan exists", api.LEVELS.length > 0, String(api.LEVELS.length));
+check("the board is laid out for level one at load",
+  lanes.some(l => l.obstacles.length > 0));
+
+/* From here on, test against the fully loaded board. */
+fullBoard();
 check("starts on title screen", game.state === "title", game.state);
 check("lanes built", lanes.length === 13, lanes.length);
 check("river lanes have obstacles",
@@ -124,10 +139,14 @@ for (let i = 1; i < CONFIG.homeCols.length; i++) {
 }
 check("all bays filled", game.bays.every(Boolean), JSON.stringify(game.bays));
 check("level clear state", game.state === "levelClear", game.state);
-frames(130);   // levelClear waits 1.8s
-check("advanced to level 2", game.level === 2, game.level);
+const wasLevel = game.level;
+frames(160);   // levelClear waits 2s
+check("advanced a level", game.level === wasLevel + 1, `${wasLevel} -> ${game.level}`);
 check("bays reset", game.bays.every(b => !b), JSON.stringify(game.bays));
-check("playing again", game.state === "play", game.state);
+/* The next level might be a bonus round rather than a crossing, which is the
+   whole point of the level plan. */
+check("the next level started",
+  ["play", "bonusIntro", "heliIntro", "rocketIntro"].includes(game.state), game.state);
 
 console.log("\n== timer ==");
 reset();
@@ -165,21 +184,25 @@ for (const lane of lanes) {
   const onScreen = lane.obstacles.filter(o => o.x + lane.width > 0 && o.x < CONFIG.cols * GRID);
   check(`lane ${lane.row} (${lane.kind}) still populated after 3000 frames`,
     onScreen.length > 0, `${onScreen.length} on screen`);
-  // No two obstacles should overlap each other.
-  const sorted = [...lane.obstacles].sort((a, b) => a.x - b.x);
-  let overlap = false;
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].x < sorted[i - 1].x + lane.width - 0.5) overlap = true;
+  /* Wrapping lanes must keep their spacing. Bouncing ones (the snakes) turn
+     round at the edges and can legitimately end up alongside each other, so
+     the spacing rule does not apply to them. */
+  if (!lane.bounce) {
+    const sorted = [...lane.obstacles].sort((a, b) => a.x - b.x);
+    let overlap = false;
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].x < sorted[i - 1].x + lane.width - 0.5) overlap = true;
+    }
+    check(`lane ${lane.row} (${lane.kind}) no overlapping obstacles`, !overlap);
   }
-  check(`lane ${lane.row} (${lane.kind}) no overlapping obstacles`, !overlap);
 }
 
 console.log("\n== diving turtles ==");
+reset();                      /* a level where the turtles actually dive */
 const diver = lanes.find(l => l.dive);
 check("a diving lane exists", !!diver);
 if (diver) {
-  api.startGame();
-  frames(1);
+  reset();
   game.frog.row = diver.row;
   game.timeLeft = 1e9;
   const sinker = diver.obstacles.find(o => o.dives);
@@ -277,11 +300,7 @@ check("a risen lilypad croc kills you", game.state === "dying", game.state);
 check("croc death reason", game.deathReason === "A crocodile was waiting", game.deathReason);
 
 console.log("\n== crocodiles in the river ==");
-resetLanes();
-api.startGame();
-game.level = PROGRESSION.gatorFromLevel;
-api.startLevel();
-frames(1);
+reset();
 const gatorLane = lanes.find(l => l.hasGators);
 const gator = gatorLane.obstacles.find(o => o.variant === "gator");
 check("crocodiles replace some logs at the right level", !!gator);
@@ -308,32 +327,25 @@ console.log("\n== snakes on the median ==");
 const medianLane = lanes.find(l => l.kind === "snake");
 check("there is a snake lane", !!medianLane);
 
-resetLanes();
-api.startGame();                                 // level 1
-frames(1);
+/* A level with no snakes: the median should be harmless. */
+const noSnakeLevel = api.LEVELS.findIndex(
+  l => l.kind === "cross" && !(l.hazards || []).includes("snake")) + 1;
+reset(noSnakeLevel);
 game.frog.row = medianLane.row;
 medianLane.obstacles.forEach(o => { o.x = game.frog.x; });
 frames(2);
 check("the median is safe before the snakes arrive", game.state === "play",
   game.state + " " + game.deathReason);
 
-resetLanes();
-api.startGame();
-game.level = PROGRESSION.snakeFromLevel;
-api.startLevel();
-frames(1);
+reset();
 game.frog.row = medianLane.row;
 medianLane.obstacles.forEach(o => { o.x = game.frog.x; });
 frames(2);
-check("snakes on the median kill you from level 3", game.state === "dying", game.state);
+check("snakes on the median kill you once they turn up", game.state === "dying", game.state);
 check("snake death reason", game.deathReason === "Bitten by a snake", game.deathReason);
 
 console.log("\n== snakes turn round instead of wrapping ==");
-resetLanes();
-api.startGame();
-game.level = PROGRESSION.snakeFromLevel;
-api.startLevel();
-frames(1);
+reset();
 game.frog.row = 12;
 game.timeLeft = 1e9;
 let reversed = false;
@@ -349,11 +361,7 @@ check("snakes stay on screen",
   medianLane.obstacles.every(o => o.x >= -1 && o.x + o.cells * GRID <= WIDTH + 1));
 
 console.log("\n== the lady frog ==");
-resetLanes();
-api.startGame();
-game.level = PROGRESSION.ladyFromLevel;
-api.startLevel();
-frames(1);
+reset();
 game.frog.row = 12;
 game.timeLeft = 1e9;
 for (let i = 0; i < 1200 && !game.lady; i++) frames(1);
@@ -450,10 +458,35 @@ check("R moves to the next track", (() => {
   return api.TRACKS.length === 1 || first !== second;
 })());
 
-check("R wraps round the end of the list", (() => {
-  Music.index = api.TRACKS.length - 1;
+check("R wraps round the end of the running order", (() => {
+  const order = Music.rotation();
+  Music.index = order[order.length - 1];
   Music.next();
-  return Music.index === 0;
+  return Music.index === order[0];
+})());
+
+check("the running order leaves out tracks a level has claimed", (() => {
+  const reserved = Music.reservedNames();
+  const order = Music.rotation();
+  return reserved.size > 0 &&
+    order.every(i => !reserved.has(api.TRACKS[i].name));
+})(), [...Music.reservedNames()].join(", "));
+
+check("a fresh player opens on the configured track", (() => {
+  Music._rotation = null;
+  store.delete("frogger.track");
+  Music.restorePreferences();
+  return !api.MUSIC.startWith || Music.trackName() === api.MUSIC.startWith;
+})(), `${Music.trackName()} vs ${api.MUSIC.startWith}`);
+
+check("a remembered choice still wins over the default", (() => {
+  const order = Music.rotation();
+  const pick = order[order.length - 1];
+  store.set("frogger.track", String(pick));
+  Music.restorePreferences();
+  const kept = Music.index === pick;
+  store.delete("frogger.track");
+  return kept;
 })());
 
 check("M toggles the music off and on again", (() => {
@@ -636,19 +669,36 @@ relax();
    The bonus round
    ========================================================================== */
 
-console.log("\n== when the bonus round happens ==");
+console.log("\n== where the special levels sit in the plan ==");
 const B = api.BONUS;
-check("no bonus before the first one", !api.isBonusLevel(B.firstLevel - 1));
-check("a bonus on the first bonus level", api.isBonusLevel(B.firstLevel));
-check("and every few levels after",
-  api.isBonusLevel(B.firstLevel + B.everyLevels) &&
-  api.isBonusLevel(B.firstLevel + B.everyLevels * 2));
-check("not on the levels in between",
-  !api.isBonusLevel(B.firstLevel + 1) && !api.isBonusLevel(B.firstLevel + 2));
+const truckLevels = api.LEVELS.map((l, i) => l.kind === "truck" ? i + 1 : 0).filter(Boolean);
+const TRUCK_LEVEL = truckLevels[0];
+
+check("the plan has monster truck levels", truckLevels.length > 0,
+  truckLevels.join(", "));
+check("isBonusLevel agrees with the plan",
+  truckLevels.every(n => api.isBonusLevel(n)) &&
+  api.LEVELS.every((l, i) => l.kind === "truck" || !api.isBonusLevel(i + 1)));
+check("there is more than one so it recurs", truckLevels.length >= 2,
+  truckLevels.join(", "));
+check("the plan has a rocket level",
+  api.LEVELS.some(l => l.kind === "rocket"));
+check("the plan has a helicopter level",
+  api.LEVELS.some(l => l.kind === "heli"));
+check("every level names an environment that exists",
+  api.LEVELS.every(l => api.ENVIRONMENTS[l.env]),
+  api.LEVELS.filter(l => !api.ENVIRONMENTS[l.env]).map(l => l.env).join(", "));
+check("every level has a name", api.LEVELS.every(l => l.name && l.name.length));
+check("no two levels in a row look the same", (() => {
+  for (let i = 1; i < api.LEVELS.length; i++) {
+    if (api.LEVELS[i].env === api.LEVELS[i - 1].env) return false;
+  }
+  return true;
+})());
 
 console.log("\n== the bonus round runs ==");
 reset();
-game.level = B.firstLevel - 1;
+game.level = TRUCK_LEVEL - 1;
 api.advanceLevel();
 check("clearing into a bonus level starts the intro", game.state === "bonusIntro", game.state);
 check("inBonus() is true during the intro", api.inBonus() === true);
@@ -697,7 +747,7 @@ check("everything is back on the board after the rampage",
 
 console.log("\n== the bonus round cannot kill you ==");
 reset();
-game.level = B.firstLevel - 1;
+game.level = TRUCK_LEVEL - 1;
 api.advanceLevel();
 frames(Math.ceil(B.introTime * 60) + 5);
 const livesAtStart = game.lives;
@@ -744,7 +794,7 @@ reset();
 
 check("the engine is silent during normal play", Eng.running === false);
 
-game.level = B.firstLevel - 1;
+game.level = TRUCK_LEVEL - 1;
 api.advanceLevel();
 check("it fires up for the countdown", Eng.running === true, game.state);
 check("it built its nodes", !!Eng._nodes);
@@ -828,7 +878,7 @@ check("and lets go of its nodes, so nothing leaks", Eng._nodes === null);
 console.log("\n== the engine does not stack up over rounds ==");
 for (let round = 0; round < 3; round++) {
   reset();
-  game.level = B.firstLevel - 1;
+  game.level = TRUCK_LEVEL - 1;
   api.advanceLevel();
   frames(4);
   Eng.start();              /* a second start must be a no-op */
@@ -843,7 +893,7 @@ check("the engine stays quiet if sound is switched off", (() => {
   CONFIG.sound = false;
   Eng.stop();
   reset();
-  game.level = B.firstLevel - 1;
+  game.level = TRUCK_LEVEL - 1;
   api.advanceLevel();
   const quiet = Eng.running === false;
   CONFIG.sound = true;
@@ -867,7 +917,7 @@ const other = api.TRACKS.findIndex(t => t.name !== bonusTrackName);
 Music.index = other;
 const startedOn = Music.trackName();
 
-game.level = B.firstLevel - 1;
+game.level = TRUCK_LEVEL - 1;
 api.advanceLevel();
 check("the rampage switches to the bonus track",
   Music.trackName() === bonusTrackName, Music.trackName());
@@ -879,7 +929,7 @@ check("and hands the radio back afterwards",
 check("but respects R pressed during the rampage", (() => {
   reset();
   Music.index = other;
-  game.level = B.firstLevel - 1;
+  game.level = TRUCK_LEVEL - 1;
   api.advanceLevel();
   Music.next();                          /* the player picks something */
   const chosen = Music.trackName();
@@ -890,7 +940,7 @@ check("but respects R pressed during the rampage", (() => {
 check("borrowing the radio does not overwrite the saved track", (() => {
   const saved = store.get("frogger.track");
   reset();
-  game.level = B.firstLevel - 1;
+  game.level = TRUCK_LEVEL - 1;
   api.advanceLevel();
   const during = store.get("frogger.track");
   for (let i = 0; i < 60 * 40 && game.state !== "play"; i++) frames(1);
@@ -905,7 +955,7 @@ console.log("\n== the screen settles down after the rampage ==");
 CONFIG.sound = true;
 relax();
 reset();
-game.level = B.firstLevel - 1;
+game.level = TRUCK_LEVEL - 1;
 api.advanceLevel();
 frames(Math.ceil(B.introTime * 60) + 5);
 
@@ -953,6 +1003,390 @@ check("starting a level calms everything down", (() => {
   api.bonus.particles.push({ x: 1, y: 1, vx: 0, vy: 0, life: 9, size: 2, color: "#fff" });
   api.startLevel();
   return api.bonus.shake === 0 && api.bonus.particles.length === 0;
+})());
+
+
+/* ==========================================================================
+   The level plan, the special levels and their sounds
+   ========================================================================== */
+
+console.log("\n== the plan starts easy and gets harder ==");
+const L = api.LEVELS;
+const crossLevels = L.map((l, i) => l.kind === "cross" ? i + 1 : 0).filter(Boolean);
+const firstCross = crossLevels[0];
+const lastCross = crossLevels[crossLevels.length - 1];
+
+check("level one is a gentle crossing",
+  L[0].kind === "cross" && L[0].speed < 0.75 && L[0].roadLanes <= 2,
+  `speed ${L[0].speed} lanes ${L[0].roadLanes}`);
+check("level one has no hazards at all", (L[0].hazards || []).length === 0,
+  (L[0].hazards || []).join(", "));
+check("level one has the most generous river", L[0].river === "wide", L[0].river);
+
+check("speed climbs across the plan", (() => {
+  const speeds = crossLevels.map(n => { game.level = n; return api.speedMultiplier(); });
+  game.level = 1;
+  return speeds[speeds.length - 1] > speeds[0] * 1.6;
+})());
+
+check("hazards accumulate rather than appearing all at once", (() => {
+  const counts = crossLevels.map(n => (L[n - 1].hazards || []).length);
+  return counts[0] < counts[counts.length - 1];
+})());
+
+check("traffic lanes build up", (() => {
+  const lanesUsed = crossLevels.map(n => L[n - 1].roadLanes);
+  return lanesUsed[0] < Math.max(...lanesUsed);
+})());
+
+console.log("\n== the board really is laid out differently per level ==");
+game.level = 1; api.applyPlan();
+const easyTraffic = lanes.filter(l => l.type === "road" && l.kind !== "snake" && l.active).length;
+const easyLogCells = lanes.find(l => l.type === "river" && l.kind === "log").cells;
+
+game.level = lastCross; api.applyPlan();
+const hardTraffic = lanes.filter(l => l.type === "road" && l.kind !== "snake" && l.active).length;
+const hardLogCells = lanes.find(l => l.type === "river" && l.kind === "log").cells;
+
+check("an easy level has fewer lanes of traffic switched on",
+  easyTraffic < hardTraffic, `${easyTraffic} vs ${hardTraffic}`);
+check("an easy level has longer logs to stand on",
+  easyLogCells > hardLogCells, `${easyLogCells} vs ${hardLogCells}`);
+check("the traffic that is on is nearest the start line", (() => {
+  game.level = 1; api.applyPlan();
+  const on = lanes.filter(l => l.type === "road" && l.kind !== "snake" && l.active)
+                  .map(l => l.row);
+  const off = lanes.filter(l => l.type === "road" && l.kind !== "snake" && !l.active)
+                   .map(l => l.row);
+  return on.length && off.length && Math.min(...on) > Math.max(...off);
+})());
+check("an empty road row has nothing in it to hit", (() => {
+  game.level = 1; api.applyPlan();
+  const dead = lanes.find(l => l.type === "road" && l.kind !== "snake" && !l.active);
+  game.frog = { x: 6 * GRID, row: dead.row, bestRow: dead.row, dir: 0,
+                hopFromX: 0, hopFromY: 0, hopT: 1e9, slideDir: null, slideAt: 0 };
+  game.state = "play";
+  dead.obstacles.forEach(o => { o.x = game.frog.x; });
+  frames(2);
+  return game.state === "play";
+})(), game.state);
+check("but an empty river row would still drown you, which is why none are",
+  lanes.filter(l => l.type === "river").every(l => l.obstacles.length > 0));
+
+console.log("\n== every level in the plan can be started ==");
+let startProblems = [];
+for (let n = 1; n <= L.length; n++) {
+  try {
+    api.startGame(n);
+    frames(3);
+    const ok = ["play", "bonusIntro", "heliIntro", "rocketIntro"].includes(game.state);
+    if (!ok) startProblems.push(`${n} ${L[n - 1].name}: state ${game.state}`);
+    if (!lanes.some(l => l.obstacles.length)) {
+      startProblems.push(`${n} ${L[n - 1].name}: empty board`);
+    }
+  } catch (e) {
+    startProblems.push(`${n} ${L[n - 1].name}: threw ${e.message}`);
+  }
+}
+check(`all ${L.length} levels start cleanly`, startProblems.length === 0,
+  startProblems.slice(0, 4).join(" | "));
+
+console.log("\n== the twists ==");
+const iceLevel = L.findIndex(l => l.rules && l.rules.ice) + 1;
+const darkLevel = L.findIndex(l => l.rules && l.rules.dark) + 1;
+const ghostLevel = L.findIndex(l => l.rules && l.rules.ghost) + 1;
+check("the plan has an ice level", iceLevel > 0);
+check("the plan has a dark level", darkLevel > 0);
+check("the plan has a ghost level", ghostLevel > 0);
+
+check("ice makes the frog carry on one more square", (() => {
+  api.startGame(iceLevel);
+  frames(1);
+  game.frog.row = 12;                 /* the start row, nothing can kill us */
+  game.frog.x = 6 * GRID;
+  const from = game.frog.x;
+  key("ArrowRight");
+  const afterHop = game.frog.x;
+  for (let i = 0; i < 30; i++) frames(1);   /* let the slide happen */
+  const afterSlide = game.frog.x;
+  return afterHop === from + GRID && afterSlide === from + GRID * 2;
+})(), `x moved to ${game.frog && game.frog.x}`);
+
+check("ice does NOT slide you an extra row", (() => {
+  /* This is the one that made the late ice level unplayable: sliding forwards
+     meant you could never stop on a road lane. */
+  api.startGame(iceLevel);
+  frames(1);
+  game.frog.row = 12;
+  game.frog.x = 6 * GRID;
+  const fromRow = game.frog.row;
+  key("ArrowUp");
+  const afterHop = game.frog.row;
+  for (let i = 0; i < 30; i++) frames(1);
+  return afterHop === fromRow - 1 && game.frog.row === afterHop;
+})(), `row ended at ${game.frog && game.frog.row}`);
+
+check("a level without ice does not slide", (() => {
+  api.startGame(firstCross);
+  frames(1);
+  game.frog.row = 12;
+  game.frog.x = 6 * GRID;
+  const from = game.frog.x;
+  key("ArrowRight");
+  for (let i = 0; i < 30; i++) frames(1);
+  return game.frog.x === from + GRID;
+})());
+
+check("the boneyard freezes the world until you move", (() => {
+  api.startGame(ghostLevel);
+  frames(1);
+  game.frog.row = 12;
+  game.timeLeft = 1e9;
+  const lane = lanes.find(l => l.type === "road" && l.active);
+  const before = lane.obstacles[0].x;
+  for (let i = 0; i < 60; i++) frames(1);       /* a second of standing still */
+  const idle = Math.abs(lane.obstacles[0].x - before);
+  key("ArrowLeft");                              /* a hop winds it forward */
+  const afterHop = lane.obstacles[0].x;
+  for (let i = 0; i < 30; i++) frames(1);
+  const moved = Math.abs(lane.obstacles[0].x - afterHop);
+  return idle < moved;
+})(), "standing still should move the world less than hopping does");
+
+check("a normal level moves whether you hop or not", (() => {
+  api.startGame(firstCross);
+  frames(1);
+  game.frog.row = 12;
+  game.timeLeft = 1e9;
+  const lane = lanes.find(l => l.type === "road" && l.active);
+  const before = lane.obstacles[0].x;
+  for (let i = 0; i < 60; i++) frames(1);
+  return Math.abs(lane.obstacles[0].x - before) > 5;
+})());
+
+console.log("\n== the rocket ==");
+const rocketLevel = L.findIndex(l => l.kind === "rocket") + 1;
+api.startGame(rocketLevel);
+frames(3);
+check("it opens with the briefing", game.state === "rocketIntro", game.state);
+frames(Math.ceil(api.ROCKET.introTime * 60) + 5);
+check("then hands over the controls", game.state === "rocket", game.state);
+check("you get the configured number of rockets",
+  api.rocket.attemptsLeft === api.ROCKET.attempts, String(api.rocket.attemptsLeft));
+check("it starts on the pad, not in the air", api.rocket.flying === false);
+
+check("left and right slide it along the pad", (() => {
+  Object.keys(api.held).forEach(k => api.held[k] = false);
+  const from = api.rocket.x;
+  api.held.right = true;
+  frames(20);
+  api.held.right = false;
+  return api.rocket.x > from;
+})());
+
+check("up launches it", (() => {
+  api.held.up = true;
+  frames(3);
+  api.held.up = false;
+  return api.rocket.flying === true && api.rocket.attemptsLeft === api.ROCKET.attempts - 1;
+})());
+
+check("it climbs", (() => {
+  const from = api.rocket.y;
+  frames(20);
+  return api.rocket.y < from;
+})());
+
+check("landing on a free pad fills it and scores", (() => {
+  /* Line it up dead on a lilypad and let it fly. */
+  api.startGame(rocketLevel);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  const before = game.score;
+  api.rocket.x = CONFIG.homeCols[2] * GRID;
+  api.rocket.flying = true;
+  api.rocket.windPhase = 0;
+  /* Cancel the wind so this is a test of the landing, not of the weather. */
+  for (let i = 0; i < 400 && api.rocket.y > api.laneY(0); i++) {
+    api.rocket.x = CONFIG.homeCols[2] * GRID;
+    frames(1);
+  }
+  return game.bays[2] === true && game.score > before;
+})(), `bays ${JSON.stringify(game.bays)}`);
+
+check("running out of rockets ends the level", (() => {
+  api.startGame(rocketLevel);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  api.rocket.attemptsLeft = 0;
+  game.lives = 9;
+  for (let i = 0; i < 200 && game.state === "rocket"; i++) frames(1);
+  return game.state === "rocketResults" || game.state === "gameOver";
+})(), game.state);
+
+console.log("\n== the helicopter ==");
+const heliLevel = L.findIndex(l => l.kind === "heli") + 1;
+api.startGame(heliLevel);
+frames(3);
+check("it opens with the briefing", game.state === "heliIntro", game.state);
+frames(Math.ceil(api.HELI.introTime * 60) + 5);
+check("then you are flying", game.state === "heli", game.state);
+
+check("the gun fires by itself", (() => {
+  const before = api.heli.bullets.length;
+  frames(30);
+  return api.heli.bullets.length > 0 || api.bonus.smashed > 0;
+})(), `bullets ${api.heli.bullets.length}`);
+
+check("bullets destroy traffic", (() => {
+  const before = api.bonus.smashed;
+  /* Hover over a live traffic row and hose it. */
+  const lane = lanes.find(l => l.type === "road" && l.kind !== "snake" && l.active);
+  api.heli.y = api.laneY(lane.row) - GRID * 1.2;
+  api.held.up = true;
+  for (let i = 0; i < 240 && api.bonus.smashed === before; i++) frames(1);
+  api.held.up = false;
+  return api.bonus.smashed > before;
+})(), `destroyed ${api.bonus.smashed}`);
+
+check("destroying things scores", api.bonus.points > 0, String(api.bonus.points));
+check("nothing can shoot back", game.state === "heli", game.state);
+
+check("the clock ends the mission", (() => {
+  api.heli.timeLeft = 0.02;
+  frames(4);
+  return game.state === "heliResults";
+})(), game.state);
+check("the bullets are cleared away", api.heli.bullets.length === 0);
+
+console.log("\n== each machine sounds like itself ==");
+const profiles = ["truck", "helicopter", "rocket"];
+check("there is an engine profile per machine",
+  profiles.every(n => api.ENGINE_PROFILES[n] !== undefined),
+  Object.keys(api.ENGINE_PROFILES).join(", "));
+check("a rotor chugs faster than a V8", (() => {
+  const truck = { ...api.ENGINE, ...api.ENGINE_PROFILES.truck };
+  const rotor = { ...api.ENGINE, ...api.ENGINE_PROFILES.helicopter };
+  return rotor.idleChug > truck.idleChug;
+})());
+check("a rocket is mostly noise", (() => {
+  const truck = { ...api.ENGINE, ...api.ENGINE_PROFILES.truck };
+  const rkt = { ...api.ENGINE, ...api.ENGINE_PROFILES.rocket };
+  return rkt.hissVol > truck.hissVol * 3;
+})());
+
+check("the right profile is picked for each level", (() => {
+  const seen = {};
+  for (const [lvl, want] of [[TRUCK_LEVEL, "truck"], [heliLevel, "helicopter"],
+                             [rocketLevel, "rocket"]]) {
+    api.startGame(lvl);
+    frames(3);
+    seen[want] = api.Engine.profile;
+  }
+  return Object.entries(seen).every(([want, got]) => want === got);
+})());
+
+check("impact sounds layer noise under the tone, or they are just beeps", (() => {
+  const impacts = ["smash", "bigsmash", "explode", "launch", "splash"];
+  return impacts.every(n => api.SOUNDS[n] && api.SOUNDS[n].crunch > 0);
+})());
+check("the rocket has its own launch sound", !!api.SOUNDS.launch);
+check("the helicopter has a gun sound", !!api.SOUNDS.shot);
+
+console.log("\n== the level selector ==");
+check("it lists every level in the plan", L.length > 10, String(L.length));
+check("bonus and boss levels are tagged", (() => {
+  const truck = api.levelTag(L[TRUCK_LEVEL - 1]);
+  const boat = L.find(l => l.kind === "boat");
+  return truck.includes("BONUS") && (!boat || api.levelTag(boat).includes("BOSS"));
+})());
+check("twists are tagged too", (() => {
+  return api.levelTag(L[iceLevel - 1]).includes("ICE") &&
+         api.levelTag(L[ghostLevel - 1]).includes("GHOST") &&
+         api.levelTag(L[darkLevel - 1]).includes("DARK");
+})());
+check("the picked level is kept inside the list", (() => {
+  game.pickedLevel = 9999; api.clampPickedLevel();
+  const high = game.pickedLevel === L.length;
+  game.pickedLevel = -5; api.clampPickedLevel();
+  const low = game.pickedLevel === 1;
+  game.pickedLevel = 1;
+  return high && low;
+})());
+check("starting from the selector starts that level", (() => {
+  game.pickedLevel = 4;
+  api.startGame();
+  frames(2);
+  return game.level === 4;
+})(), String(game.level));
+check("level names survive looping past the end", (() => {
+  const beyond = api.levelName(L.length + 3);
+  return typeof beyond === "string" && beyond.length > 0 && beyond.includes("+");
+})(), api.levelName(L.length + 3));
+check("looping keeps making it faster", (() => {
+  /* Compare the same entry in the plan on two different laps, or you end up
+     comparing a fast crossing against a bonus round that has no speed. */
+  const span = L.length - api.LEVEL_LOOP.from + 1;
+  const inLoop = crossLevels.filter(n => n >= api.LEVEL_LOOP.from).pop();
+  game.level = inLoop;
+  const lap0 = api.speedMultiplier();
+  game.level = inLoop + span;
+  const lap1 = api.speedMultiplier();
+  game.level = 1;
+  return api.planFor(inLoop) === api.planFor(inLoop + span) && lap1 > lap0;
+})());
+
+console.log("\n== environments ==");
+check("each environment has a label",
+  Object.values(api.ENVIRONMENTS).every(e => e.label));
+check("environment colours are valid hex", (() => {
+  const HEX = /^#[0-9a-fA-F]{6}$/;
+  const bad = [];
+  for (const [name, e] of Object.entries(api.ENVIRONMENTS)) {
+    for (const [k, v] of Object.entries(e.bg || {})) if (!HEX.test(v)) bad.push(`${name}.${k}`);
+    for (const [k, v] of Object.entries(e.pixels || {})) {
+      if (!HEX.test(v)) bad.push(`${name}.px.${k}`);
+      if (!(k in api.PALETTE)) bad.push(`${name} unknown letter ${k}`);
+    }
+  }
+  return bad.length === 0 ? true : bad.join(", ");
+})() === true);
+check("swapped-in pictures exist", (() => {
+  const missing = [];
+  for (const [name, e] of Object.entries(api.ENVIRONMENTS)) {
+    for (const [kind, sprite] of Object.entries(e.art || {})) {
+      if (!api.SPRITES[sprite]) missing.push(`${name}: ${sprite}`);
+    }
+  }
+  return missing.length === 0 ? true : missing.join(", ");
+})() === true);
+check("changing level changes the look", (() => {
+  api.startGame(1); frames(1);
+  const a = api.Art.color("water");
+  api.startGame(darkLevel); frames(1);
+  const b = api.Art.color("water");
+  return a !== b;
+})());
+check("a swapped picture really swaps", (() => {
+  /* Swapping one picture for another only means anything on a pixel theme;
+     the emoji theme has no sprite names to swap. */
+  CONFIG.theme = "arcade";
+  const arctic = Object.entries(api.ENVIRONMENTS).find(([, e]) => e.art && e.art.log);
+  if (!arctic) return true;
+  api.Art.setEnvironment(arctic[0]);
+  const swapped = api.Art.of("log");
+  api.Art.setEnvironment("pond");
+  const normal = api.Art.of("log");
+  return swapped.sprite === arctic[1].art.log && normal.sprite !== swapped.sprite;
+})());
+check("C still overrides the level's colours", (() => {
+  api.startGame(1); frames(1);
+  api.Art.setPalette(0);
+  const auto = api.Art.color("water");
+  const forced = api.PALETTES.findIndex(p => p.bg && p.bg.water);
+  if (forced < 0) return true;
+  api.Art.setPalette(forced);
+  const manual = api.Art.color("water");
+  api.Art.setPalette(0);
+  return manual !== auto && manual === api.PALETTES[forced].bg.water;
 })());
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

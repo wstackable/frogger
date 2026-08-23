@@ -114,7 +114,7 @@ const MODES = {
     refillLivesOnLevel: true,    /* full tank at the start of each level */
     flyGivesLife: false,         /* the fly is just points here */
     baySpawnGap: 5,              /* so flies and lilypad crocs are common */
-    speedStep: 0.08,             /* a gentler climb than the arcade */
+    speedScale: 0.92,            /* everything a touch slower than the plan says */
     rules: {
       /* The two deaths that feel unfair before you know they exist. */
       bankIsDeath: false,
@@ -129,7 +129,7 @@ const MODES = {
     refillLivesOnLevel: false,
     flyGivesLife: true,          /* catch one and you get a frog back */
     baySpawnGap: 17,             /* rare, so it matters when you see one */
-    speedStep: 0.12,
+    speedScale: 1.10,            /* everything a touch faster than the plan says */
     rules: {
       bankIsDeath: true,
       occupiedBayIsDeath: true,
@@ -170,6 +170,286 @@ const BONUS = {
 
   /* How long a flattened thing stays gone before it comes back for more. */
   respawnDelay: 1.4,
+};
+
+
+
+
+/* ==========================================================================
+   1d. LEVELS  ::  the run, level by level
+   --------------------------------------------------------------------------
+   THIS is what makes the game get harder, and change shape while it does.
+
+   Every level, including the bonus and boss ones, is one line here. The level
+   selector on the title screen is just this list with names on it.
+
+     name      what it is called on the title screen
+     kind      what sort of level it is:
+                 'cross'  the normal Frogger crossing
+                 'truck'  monster truck rampage
+                 'rocket' line up and launch
+                 'heli'   helicopter with a machine gun
+                 'boat'   speedboat boss run
+     env       which environment from ENVIRONMENTS below
+
+   Only 'cross' levels use the rest:
+
+     speed     multiplier on every obstacle. 0.65 is a stroll, 1.6 is nasty.
+     roadLanes how many lanes of traffic are switched on, counting up from the
+               start line. The rest of the road is empty, which is harmless.
+     river     how generous the water is: 'wide', 'easy', 'normal', 'tight'.
+               An empty RIVER row would drown you, so the river gets easier by
+               having longer logs and smaller gaps, never by being empty.
+     hazards   which extras exist: 'fly', 'lady', 'bayCroc', 'snake', 'gator',
+               'diving'
+     rules     one-off twists: { ice: true }, { dark: true }, { ghost: true }
+
+   Add a level, delete one, reorder them. Run out of levels and the last few
+   repeat with the speed still climbing.
+   ========================================================================== */
+
+const LEVELS = [
+  { name: 'First Hop',        kind: 'cross',  env: 'pond',
+    speed: 0.62, roadLanes: 2, river: 'wide',   hazards: [] },
+
+  { name: 'Getting Busy',     kind: 'cross',  env: 'dusk',
+    speed: 0.74, roadLanes: 3, river: 'wide',   hazards: ['fly'] },
+
+  { name: 'Monster Truck Rampage', kind: 'truck', env: 'city' },
+
+  { name: 'Turtle Trouble',   kind: 'cross',  env: 'jungle',
+    speed: 0.86, roadLanes: 4, river: 'easy',   hazards: ['fly', 'diving'] },
+
+  { name: 'Rocket Ride',      kind: 'rocket', env: 'space' },
+
+  { name: 'Slippery Bank',    kind: 'cross',  env: 'arctic',
+    speed: 0.90, roadLanes: 4, river: 'easy',   hazards: ['fly', 'diving'],
+    rules: { ice: true } },
+
+  { name: 'Night Crossing',   kind: 'cross',  env: 'city',
+    speed: 1.00, roadLanes: 5, river: 'normal', hazards: ['fly', 'lady', 'diving'],
+    rules: { dark: true } },
+
+  { name: 'Chopper Support',  kind: 'heli',   env: 'desert' },
+
+  { name: 'Snake Pit',        kind: 'cross',  env: 'jungle',
+    speed: 1.08, roadLanes: 5, river: 'normal',
+    hazards: ['fly', 'lady', 'bayCroc', 'snake', 'diving'] },
+
+  { name: 'The Boneyard',     kind: 'cross',  env: 'boneyard',
+    speed: 1.05, roadLanes: 5, river: 'normal', hazards: ['fly', 'diving'],
+    rules: { ghost: true } },
+
+  { name: 'Croc Alley',       kind: 'cross',  env: 'desert',
+    speed: 1.16, roadLanes: 5, river: 'normal',
+    hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'] },
+
+  { name: 'Rampage II',       kind: 'truck',  env: 'dusk' },
+
+  { name: 'Deep Freeze',      kind: 'cross',  env: 'arctic',
+    speed: 1.26, roadLanes: 5, river: 'tight',
+    hazards: ['fly', 'bayCroc', 'snake', 'gator', 'diving'],
+    rules: { ice: true } },
+
+  { name: 'Orbital Traffic',  kind: 'cross',  env: 'space',
+    speed: 1.34, roadLanes: 5, river: 'tight',
+    hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'] },
+
+  { name: 'Blackout',         kind: 'cross',  env: 'boneyard',
+    speed: 1.40, roadLanes: 5, river: 'tight',
+    hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'],
+    rules: { dark: true } },
+
+  { name: 'Rocket Ride II',   kind: 'rocket', env: 'space' },
+
+  { name: 'Speedboat Boss Run', kind: 'boat', env: 'city' },
+];
+
+/* ==========================================================================
+   1f. MUSIC  ::  which track plays when
+   --------------------------------------------------------------------------
+   Tracks fall into two groups, and you never have to maintain the list of
+   which is which: any track named by a level, an environment or a level KIND
+   is automatically reserved, meaning R will not shuffle into it. It only plays
+   on the level it belongs to.
+
+   To give a level its own song, add `music: 'Track Name'` to its line in
+   LEVELS above. That is all.
+   ========================================================================== */
+
+const MUSIC = {
+  startWith: 'Ninja Boogie',   /* the first thing you hear */
+  shuffle: true,               /* false plays the rest in filename order */
+
+  /* Songs that belong to a whole kind of level rather than one level. */
+  forKind: {
+    truck: 'Box Jumping',
+    boat:  'Speedboat Boss Run',
+  },
+};
+
+
+/* ==========================================================================
+   1g. ROCKET and HELICOPTER
+   ========================================================================== */
+
+const ROCKET = {
+  attempts: 3,        /* how many rockets you get */
+  climb: 300,         /* how fast it flies up, pixels a second */
+  steer: 170,         /* how hard you can push it sideways in flight */
+  wind: 90,           /* how hard the crosswind shoves, pixels a second */
+  windTurns: 0.7,     /* how often the wind changes its mind, per second */
+  introTime: 2.6,
+  resultsTime: 3.0,
+  points: 500,        /* per rocket landed */
+};
+
+const HELI = {
+  duration: 24,       /* seconds of air support */
+  speed: 230,         /* how fast it flies */
+  fireEvery: 0.11,    /* seconds between shots */
+  bulletSpeed: 620,
+  introTime: 3.0,
+  resultsTime: 4.0,
+  points: { car: 120, truck: 300, boat: 180 },
+  comboWindow: 1.8,
+  comboMax: 12,
+  respawnDelay: 1.2,
+};
+
+/* --------------------------------------------------------------------------
+   The one-off twists a 'cross' level can turn on with `rules`.
+   -------------------------------------------------------------------------- */
+
+const TWISTS = {
+  /* ice: the frog carries on one more square after it lands. */
+  slideDelay: 0.11,   /* seconds between the hop and the slide */
+
+  /* dark: you only see a circle around the frog, plus car headlights. */
+  darkness: 0.87,     /* how black the rest of the board goes */
+  lampRadius: 2.6,    /* how far you can see, in squares */
+  headlampReach: 3.4, /* how far a car's headlights throw */
+
+  /* ghost: the world only moves when you do, like a Mario ghost house. */
+  ghostPerHop: 0.5,   /* seconds of world time each hop buys you */
+  ghostDrift: 0.12,   /* and a slow trickle so it is never fully frozen */
+  ghostCount: 4,      /* how many ghosts drift about for atmosphere */
+};
+
+
+/* Past the end of the list, the last few levels repeat with the speed still
+   climbing, so a good player never runs out of game. */
+const LEVEL_LOOP = {
+  from: 8,            /* start repeating from this level number */
+  speedPerLap: 0.18,  /* and add this much speed each time round */
+};
+
+/* How generous the water is. Longer logs and smaller gaps make it kinder. */
+const RIVER_PRESETS = {
+  wide:   { length: +2, gap: -1 },
+  easy:   { length: +1, gap: -1 },
+  normal: { length:  0, gap:  0 },
+  tight:  { length:  0, gap: +1 },
+};
+
+
+/* ==========================================================================
+   1e. ENVIRONMENTS  ::  where the level happens
+   --------------------------------------------------------------------------
+   An environment is the background colours, plus optional recolouring of the
+   pixel art, plus optional swaps of individual pictures. It is chosen per
+   level in LEVELS above.
+
+   The C key still cycles PALETTES by hand if you want to override the look.
+   ========================================================================== */
+
+const ENVIRONMENTS = {
+
+  pond: {
+    label: 'POND',
+    /* No overrides: this is the 1981 cabinet look from THEMES. */
+  },
+
+  city: {
+    label: 'CITY AT NIGHT',
+    bg: { water: '#0a1832', road: '#101014', grass: '#204030',
+          median: '#3a2060', bankLine: '#40c0a0', bayInner: '#050a18',
+          textDim: '#40e0d0', accent: '#ffd84a',
+          timeBar: '#40e0d0', timeLow: '#ff4060' },
+    pixels: { G: '#40ffb0', g: '#20a878', d: '#0d5040',
+              B: '#6a5a7a', b: '#3a3048', n: '#8f7fa0' },
+  },
+
+  arctic: {
+    label: 'ARCTIC',
+    bg: { water: '#123a5a', road: '#2a3340', grass: '#e8f4ff',
+          median: '#7fb0d8', bankLine: '#ffffff', bayInner: '#0b2038',
+          text: '#ffffff', textDim: '#bfe4ff',
+          timeBar: '#8fd8ff', timeLow: '#ff7a7a' },
+    pixels: { G: '#8ff0ff', g: '#3fa8d0', d: '#1d5070',
+              B: '#dff0ff', b: '#8fb8d8', n: '#ffffff',
+              R: '#ff9a60', r: '#a04820' },
+    art: { log: 'iceFloe' },
+  },
+
+  space: {
+    label: 'DEEP SPACE',
+    bg: { water: '#0a0620', road: '#050308', grass: '#2a1050',
+          median: '#5a1878', bankLine: '#b060ff', bayInner: '#04020c',
+          textDim: '#a080ff', accent: '#ffe040',
+          timeBar: '#40ffd0', timeLow: '#ff3070' },
+    pixels: { G: '#50ff90', g: '#20b060', d: '#0a5030',
+              B: '#8878a8', b: '#443a58', n: '#b0a0c8',
+              R: '#ff60c0', r: '#a02070' },
+    art: { log: 'asteroid', car: 'ufo', taxi: 'ufo' },
+    stars: true,
+  },
+
+  desert: {
+    label: 'DESERT HIGHWAY',
+    bg: { water: '#1f5f6f', road: '#2a2018', grass: '#d8a850',
+          median: '#a86828', bankLine: '#f0d090', bayInner: '#0f3038',
+          textDim: '#f0c880', accent: '#ffe870',
+          timeBar: '#d8c060', timeLow: '#ff6030' },
+    pixels: { G: '#a8d840', g: '#6f9820', d: '#3a5010',
+              B: '#c08840', b: '#7a5020', n: '#e0b070' },
+  },
+
+  dusk: {
+    label: 'SUNSET',
+    bg: { water: '#2a1a5a', road: '#20141c', grass: '#c86828',
+          median: '#e08a30', bankLine: '#f8c060', bayInner: '#140c2c',
+          textDim: '#ffb870', accent: '#ffd860',
+          timeBar: '#f8c060', timeLow: '#ff4040' },
+    pixels: { G: '#ffd040', g: '#d08820', d: '#7a4410',
+              B: '#9a5828', b: '#5a2f12', n: '#d09050',
+              R: '#ff6030', r: '#a02810' },
+  },
+
+  jungle: {
+    label: 'JUNGLE',
+    bg: { water: '#0d3f36', road: '#12180f', grass: '#2f7a1f',
+          median: '#6a8f18', bankLine: '#8fd83f', bayInner: '#062420',
+          textDim: '#a8e070', accent: '#e8f060',
+          timeBar: '#8fd83f', timeLow: '#ff5a3a' },
+    pixels: { G: '#9fff50', g: '#5aa820', d: '#28500f',
+              B: '#7a6030', b: '#3f3018', n: '#a88a4a',
+              R: '#ff8020', r: '#a04008' },
+  },
+
+  boneyard: {
+    label: 'THE BONEYARD',
+    bg: { water: '#1b2230', road: '#08080a', grass: '#2a3028',
+          median: '#3a3040', bankLine: '#7a8878', bayInner: '#05060a',
+          text: '#e8f0e0', textDim: '#9fb09f', accent: '#c8f078',
+          timeBar: '#8fc060', timeLow: '#c03040' },
+    pixels: { G: '#c8f0a0', g: '#7a9860', d: '#3a4830',
+              B: '#5a5048', b: '#302a26', n: '#7a6f64',
+              R: '#a0a8a0', r: '#5a605a',
+              W: '#e8f0e8', P: '#b0e070' },
+    music: 'Boneyard',
+    fog: true,
+  },
 };
 
 
@@ -234,7 +514,9 @@ const PROGRESSION = {
 
      bounce   turns round at the edges instead of wrapping (snakes do this)
 
-     fromLevel  this row stays empty until you reach that level
+   Which rows are switched on, how fast they go and how generous the river is
+   are all decided per level in LEVELS above. What is here are the defaults a
+   level starts from.
 
    Add rows, delete rows, reorder them. The board resizes itself.
    ========================================================================== */
@@ -254,7 +536,7 @@ const LANES = [
 
   /* --- The median. Safe until level 3, when the snakes turn up. ---------- */
   { type: 'road',  kind: 'snake',  length: 2, spacing: [9], speed: -0.45,
-    bounce: true, fromLevel: PROGRESSION.snakeFromLevel, background: 'median' },
+    bounce: true, background: 'median' },
 
   /* --- The road. Five rows, trucks nearest the median. ------------------- */
   { type: 'road',  kind: 'truck',  length: 2, spacing: [3,8],   speed: -0.70 },
@@ -418,8 +700,9 @@ const THEMES = {
 
 const PALETTES = [
 
-  /* The 1981 cabinet. No overrides: this is what sprites.js already says. */
-  { name: 'Arcade 1981' },
+  /* No overrides, so each level's own environment shows through. Press C to
+     leave this and force one look for the whole game. */
+  { name: 'Auto (level)' },
 
   {
     name: 'Sunset Highway',

@@ -20,10 +20,17 @@ export async function load() {
 
   // ---- stubs ----
   const noop = () => {};
+  /* Gradients are objects with methods, not just a return value, so the
+     catch-all noop is not enough: the night levels build a radial gradient
+     and call addColorStop on it. */
+  const gradient = () => ({ addColorStop() {} });
+
   const ctx = new Proxy({}, {
     get(t, k) {
       if (k in t) return t[k];
       if (k === "measureText") return () => ({ width: 10 });
+      if (k === "createRadialGradient" || k === "createLinearGradient" ||
+          k === "createPattern") return gradient;
       return noop;
     },
     set(t, k, v) { t[k] = v; return true; },
@@ -165,8 +172,18 @@ export async function load() {
   }
   function frames(n, ms = 16.6667) { for (let i = 0; i < n; i++) tick(ms); }
 
+  /* A real keyboard sends keyup as well. Without it `held` never clears and a
+     level that reads held keys (the truck, the rocket) ends up stuck steering
+     into a wall it was told to steer into ten tests ago. */
   function key(k) {
     for (const l of listeners.keydown || []) l.fn({ key: k, preventDefault: noop });
+    for (const l of listeners.keyup || []) l.fn({ key: k, preventDefault: noop });
+  }
+
+  /* For levels that need a key genuinely held down. */
+  function holdKey(k, down) {
+    const type = down ? "keydown" : "keyup";
+    for (const l of listeners[type] || []) l.fn({ key: k, preventDefault: noop });
   }
 
   /* Move the fake audio clock forward. The engine reads it for its rev
@@ -177,7 +194,7 @@ export async function load() {
   }
 
   return {
-    api, tick, frames, key, listeners, canvas, store,
+    api, tick, frames, key, holdKey, listeners, canvas, store,
     audio: { scheduled, advanceAudio, reset: () => { scheduled.length = 0; } },
   };
 }

@@ -32,6 +32,35 @@ the screen is the whole design.
 | Snakes | patrol the median from level 3, so the safe row stops being safe |
 | River crocodiles | replace some logs. The back is a fine boat. The jaws are not |
 
+**It starts easy and changes shape as it goes.** Level one is two lanes of
+slow traffic, fat logs and nothing that dives: a guaranteed win. From there the
+plan in `js/config.js` turns lanes of traffic on, tightens the river, adds
+hazards and speeds everything up, level by level. Seventeen named levels, then
+the last stretch repeats with the speed still climbing.
+
+**A level selector on the title screen.** Every level listed by name, including
+the bonus and boss ones, all unlocked, so you can jump straight to any of them.
+Up and down to pick, left and right for the mode.
+
+**Eight environments**, one per level and never two the same back to back:
+pond, sunset, city at night, jungle, arctic, desert highway, deep space and the
+boneyard. Each recolours the whole board and some swap pictures outright, so
+the arctic has ice floes instead of logs and space has asteroids.
+
+**Five kinds of level.** A normal crossing, plus:
+
+| | |
+|---|---|
+| **Monster truck** | free driving, nothing can hurt you, flatten everything |
+| **Helicopter** | fly over the board with a machine gun that fires by itself |
+| **Rocket** | slide along the bottom, launch, and fight a crosswind to line up with a lilypad |
+| **Speedboat boss** | first person. Not built yet. |
+
+**And three twists on the normal crossing.** *Ice* makes the frog slide an
+extra square sideways. *Dark* leaves you a circle of light around the frog and
+sweeping headlights. *Ghost*, in the boneyard, is the Mario ghost-house trick:
+**the world only moves when you do.** Stand still and the traffic freezes.
+
 **One frog clears a level.** The arcade wanted all five, which is a long haul
 when you are playing in short bursts. There are still five lilypads to aim at,
 but the level ends when you land in one. Set `baysToClear` to 5 for the arcade
@@ -151,6 +180,10 @@ Night, Ice World and Candy ship with it; a new one is a block of hex codes.
   bg:     { water: '#0f380f', road: '#081808', grass: '#8bac0f' },
   pixels: { G: '#9bbc0f', R: '#8bac0f', B: '#306230' } },
 ```
+
+**Or give a level its own song.** Add `music: 'Track Name'` to its line in
+`LEVELS` and it is claimed: that track stops appearing in the shuffle and only
+plays on that level.
 
 **Or add music.** Drop files into `music/` and run `deno task music`. That
 rewrites the track list for you, so you never hand-edit it. Only the top level

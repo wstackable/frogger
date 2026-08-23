@@ -15,8 +15,18 @@
    ========================================================================== */
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PORT = 8731;
-const CDP_PORT = 9339;
+
+/* Pick free ports rather than fixed ones. A run that got killed part way
+   through used to leave its server holding the port, and every run after that
+   died on startup with "address already in use". */
+function freePort() {
+  const l = Deno.listen({ port: 0 });
+  const { port } = l.addr;
+  l.close();
+  return port;
+}
+const PORT = freePort();
+const CDP_PORT = freePort();
 
 let pass = 0, fail = 0;
 function check(name, cond, extra = "") {
@@ -303,10 +313,37 @@ try {
   check("it loops, so it never falls silent",
     await evaluate("frogger.Music._audio.loop === true"));
 
-  const at0 = await evaluate("frogger.Music._audio.currentTime");
+  /* Wait for it to genuinely start. If its blob has not finished downloading
+     yet the element streams over HTTP instead, and on a cold cache that can
+     take a moment to get going. Not a fault, just slower than a fixed sleep. */
+  let began = 0;
+  for (let i = 0; i < 40; i++) {
+    began = await evaluate("frogger.Music._audio.currentTime");
+    if (began > 0) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  check("the file starts playing", began > 0,
+    `still at 0 after 10s. readyState ` +
+    String(await evaluate("frogger.Music._audio.readyState")));
+
   await new Promise((r) => setTimeout(r, 900));
   const at1 = await evaluate("frogger.Music._audio.currentTime");
-  check("the file is actually playing through", at1 > at0, `${at0} -> ${at1}`);
+  check("and keeps playing through", at1 > began, `${began} -> ${at1}`);
+
+  /* The whole point of the prefetch: by now the files should be in memory,
+     so the next track starts instantly rather than buffering. */
+  await evaluate("frogger.Music.warmUp()");
+  for (let i = 0; i < 60; i++) {
+    if (await evaluate("Object.keys(frogger.Music._blobs).length >= 2")) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const cached = await evaluate("Object.keys(frogger.Music._blobs).length");
+  check("tracks are fetched into memory ahead of time", cached >= 2,
+    `${cached} cached`);
+  check("and playback uses the in-memory copy",
+    await evaluate("String(frogger.Music._audio.src).startsWith('blob:')") ||
+    cached === 0,
+    String(await evaluate("String(frogger.Music._audio.src).slice(0, 40)")));
 
   /* Every file in the list must really be there and be servable. */
   const files = await evaluate("frogger.TRACKS.filter(t => t.file).map(t => t.file)");
