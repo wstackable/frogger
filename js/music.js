@@ -25,12 +25,14 @@
 const TRACKS = [
 
   /* MUSIC-FILES:START -- rebuilt by `deno task music`, do not hand-edit */
-  { name: 'Boneyard',          file: 'music/boneyard.mp3' },
-  { name: 'Box Jumping',       file: 'music/Box Jumping.m4a' },
-  { name: 'Chiptune Party',    file: 'music/Chiptune Party.mp3' },
-  { name: 'Laser Knights',     file: 'music/Laser Knights.mp3' },
-  { name: 'Mountain Climbing', file: 'music/Mountain Climbing.mp3' },
-  { name: 'Ninja Boogie',      file: 'music/Ninja Boogie.mp3' },
+  { name: 'Archer Speedrun',    file: 'music/Archer Speedrun.mp3' },
+  { name: 'Boneyard',           file: 'music/boneyard.mp3' },
+  { name: 'Box Jumping',        file: 'music/Box Jumping.m4a' },
+  { name: 'Chiptune Party',     file: 'music/Chiptune Party.mp3' },
+  { name: 'Laser Knights',      file: 'music/Laser Knights.mp3' },
+  { name: 'Mountain Climbing',  file: 'music/Mountain Climbing.mp3' },
+  { name: 'Ninja Boogie',       file: 'music/Ninja Boogie.mp3' },
+  { name: 'Speedboat Boss Run', file: 'music/Speedboat Boss Run.mp3' },
   /* MUSIC-FILES:END */
 
 ];
