@@ -273,8 +273,12 @@ const LEVELS = [
     hazards: ['fly', 'bayCroc', 'snake', 'gator', 'diving'],
     /* The snakes patrol here rather than hunt. Ice already says "you cannot
        stop", and the median is the one place it lets you. A snake that
-       punishes standing on the median takes the level's only breath away. */
-    rules: { ice: true, snakesHunt: false } },
+       punishes standing on the median takes the level's only breath away.
+
+       iceStep here is roughly half the usual, so this is a genuinely fast
+       slide: you get about a quarter of a second between being shoved
+       forward and being shoved forward again. */
+    rules: { ice: true, snakesHunt: false, iceStep: 0.25 } },
 
   { name: 'Orbital Traffic',
     blurb: 'no air. grab the pockets or you do not make it across.',  kind: 'cross',  env: 'space',
@@ -283,16 +287,20 @@ const LEVELS = [
     rules: { airless: true } },
 
   { name: 'Blackout',
-    blurb: 'dark, and everything is fast. good luck.',         kind: 'cross',  env: 'boneyard',
+    blurb: 'your lantern and nothing else. no headlights, no mercy.',
+    kind: 'cross',  env: 'boneyard',
     speed: 1.40, roadLanes: 5, river: 'tight',
     hazards: ['fly', 'lady', 'bayCroc', 'snake', 'gator', 'diving'],
-    rules: { dark: true } },
+    /* Night Crossing is the one that teaches you to read headlights. This one
+       takes them away. All you get is the lantern. */
+    rules: { dark: true, headlights: false, darkness: 0.995 } },
 
   { name: 'Rocket Ride II',
     blurb: 'same rocket, angrier sky.',   kind: 'rocket', env: 'space' },
 
   { name: 'Speedboat Boss Run',
-    blurb: 'first person. flat out down the river.', kind: 'boat', env: 'city' },
+    blurb: 'first person, down the gorge. sink it before it sinks you.',
+    kind: 'boat', env: 'gorge' },
 ];
 
 /* ==========================================================================
@@ -324,7 +332,7 @@ const MUSIC = {
    ========================================================================== */
 
 const ROCKET = {
-  attempts: 3,        /* how many rockets you get */
+  attempts: 10,       /* how many rockets you get */
   climb: 235,         /* how fast it flies up, pixels a second */
   steer: 260,         /* how hard you can push it sideways in flight */
   wind: 80,           /* how hard the crosswind shoves, pixels a second */
@@ -353,6 +361,12 @@ const ROCKET = {
      also have to let go of UP first. Both matter now that UP is the throttle
      and people hold it down rather than tapping it. */
   relaunchPause: 0.9,
+
+  /* The median is the one place you can stop, exactly as it is on the ice.
+     Coast into it and the rocket hovers there instead of drifting on, so you
+     can sit and wait for a gap in the top half rather than committing to the
+     whole climb in one go. Touch the throttle and you are off again. */
+  hoverOnMedian: true,
 };
 
 const HELI = {
@@ -505,6 +519,24 @@ const BOAT = {
   introTime: 3.2,
   resultsTime: 4.2,
 
+  /* --- the boss fights back ---
+     It has three tempers. Every couple of rams it gets angrier: it weaves
+     faster, mines more often, and from the second phase it starts shooting
+     back down the river at you. A boss that only runs away is a chase, not a
+     boss. */
+  phases: [
+    { at: 0, weave: 1.0, mine: 1.0, shootEvery: 0,   label: '' },
+    { at: 2, weave: 1.5, mine: 0.7, shootEvery: 1.6, label: 'IT IS ANGRY NOW' },
+    { at: 4, weave: 2.1, mine: 0.5, shootEvery: 1.0, label: 'LAST STAND' },
+  ],
+
+  shotSpeed:  11,     /* world units a second, coming at you */
+  shotHalf:   0.22,   /* how wide a shot is */
+
+  /* --- the banks --- */
+  props: 26,          /* rocks and posts along the gorge, to sell the speed */
+  propSpacing: 1.9,
+
   points: { ram: 400, win: 3000 },
 };
 
@@ -521,8 +553,11 @@ const TWISTS = {
      is committing. So: the moment you leave solid ground you keep sliding
      forward on your own, and all you get to do is steer left and right until
      you reach the median. Then you do it again across the river. */
-  iceStep: 0.62,      /* seconds between one forced slide forward and the next */
-  iceFirstStep: 0.24, /* a short breath before the first one, then you are going */
+  /* Seconds between one forced slide forward and the next. A level can make
+     its own ice faster with `iceStep` in its rules, which is how Deep Freeze
+     gets to be the nasty one. */
+  iceStep: 0.46,
+  iceFirstStep: 0.12, /* barely a breath. you are going almost at once. */
 
   /* On ice the frog glides rather than hops. The forward slide animates over
      the whole gap between slides, so it never stops moving, and steering is a
@@ -537,11 +572,24 @@ const TWISTS = {
      The first go at this left the board readable, which meant the level was a
      normal crossing with a filter over it. It is properly dark now: everything
      outside the lantern and the headlights is gone, not dimmed. */
-  darkness: 0.975,    /* how black the rest of the board goes */
-  lampRadius: 1.9,    /* how far the lantern throws, in squares */
+  darkness: 0.985,    /* how black the rest of the board goes */
+  lampRadius: 1.8,    /* how far the lantern throws, in squares */
   lampWarmth: 0.20,   /* how much warm light it puts back on what it lights */
   lampSwing: 0.9,     /* how far the lantern swings behind you, in squares */
-  headlampReach: 2.8, /* how far a car's headlights throw */
+
+  /* Headlights.
+
+     These were the actual problem with the dark levels. The beam was centred
+     on the vehicle, so every car on the board lit itself, and a level that was
+     97% black still showed you all of it. The beam is thrown ahead of the nose
+     now, and it is a beam rather than a bubble, so a car is a pair of lights
+     coming at you out of nothing rather than a lit-up car.
+
+     A level can switch them off entirely with `headlights: false`, and
+     Blackout does, because Blackout should mean blackout. */
+  headlights: true,
+  headlampReach: 3.2, /* how far ahead of the nose the beam throws */
+  headlampWidth: 0.8, /* and how wide it is, in squares */
 
   /* ghost: the world only moves when you do, like a Mario ghost house.
 
@@ -668,6 +716,17 @@ const ENVIRONMENTS = {
     pixels: { G: '#9fff50', g: '#5aa820', d: '#28500f',
               B: '#7a6030', b: '#3f3018', n: '#a88a4a',
               R: '#ff8020', r: '#a04008' },
+  },
+
+  gorge: {
+    label: 'THE GORGE',
+    bg: { water: '#0e2f52', road: '#241a2e', grass: '#5a3a2e',
+          median: '#7a4a34', bankLine: '#ffb060', bayInner: '#3a1f4e',
+          text: '#fff2e0', textDim: '#ffb87a', accent: '#ffd84a',
+          timeBar: '#ff9a3c', timeLow: '#ff3a5a' },
+    pixels: { G: '#ffd070', g: '#d08830', d: '#7a4818',
+              B: '#8a5a3a', b: '#4a2c18', n: '#c08a5a',
+              R: '#ff7040', r: '#a03018' },
   },
 
   boneyard: {

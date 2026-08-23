@@ -1756,9 +1756,23 @@ const rocket = {
   fuel: 0,
   burning: false,
   armed: false,
+  hovering: false,
   outcome: '',
   outcomeAt: -99,
 };
+
+/* The median row, as a band of screen y. There is only one, and it is the row
+   the whole board is built around resting on. */
+function medianLane() {
+  return lanes.find((l) => l.type === 'safe' || l.background === 'median') || null;
+}
+
+function overMedian(y) {
+  const lane = medianLane();
+  if (!lane) return false;
+  const top = laneY(lane.row);
+  return y + GRID * 0.5 > top && y + GRID * 0.5 < top + GRID;
+}
 
 function startRocket() {
   rocket.attemptsLeft = ROCKET.attempts;
@@ -1859,10 +1873,24 @@ function updateRocket(dt) {
   rocket.burning = held.up && rocket.fuel > 0;
   if (rocket.burning) rocket.fuel = Math.max(0, rocket.fuel - dt);
 
-  const climb = ROCKET.climb * (rocket.burning ? ROCKET.boost : ROCKET.coast);
+  /* The median is the one place you can stop. Coast into it and the rocket
+     holds there, so the climb splits into two decisions instead of one long
+     commit. Same rule the ice level teaches, asked from below. */
+  /* Only while you still have throttle to leave with. Hovering on an empty
+     tank would be a rest stop you can never get off, which is a softlock, not
+     a mechanic. */
+  rocket.hovering = ROCKET.hoverOnMedian && !rocket.burning &&
+                    rocket.fuel > 0 && overMedian(rocket.y);
+
+  const climb = rocket.hovering ? 0
+              : ROCKET.climb * (rocket.burning ? ROCKET.boost : ROCKET.coast);
 
   rocket.x += (steer * ROCKET.steer + rocket.wind) * dt;
   rocket.y -= climb * dt;
+
+  /* A little bob while it sits there, so it reads as holding station rather
+     than as the game having frozen. */
+  if (rocket.hovering) rocket.y += Math.sin(game.time * 5) * 0.35;
   rocket.x = Math.max(-GRID * 0.4, Math.min(WIDTH - GRID * 0.6, rocket.x));
 
   rocket.trail.push({ x: rocket.x + GRID / 2, y: rocket.y + GRID, at: game.time });
@@ -1999,7 +2027,13 @@ const boat = {
 
   mines: [],
   nextMine: 0,
+  shots: [],
+  nextShot: 0,
+  props: [],
   spray: [],
+  phase: 0,
+  phaseAt: -99,
+  sinkAt: -99,
 
   timeLeft: 0,
   rams: 0,
@@ -2033,6 +2067,30 @@ function boatScreenX(x, scale) {
   return WIDTH / 2 + x * scale * (WIDTH / 2) * BOAT.spread;
 }
 
+/* Rocks and posts along both banks. They do nothing except stream past you,
+   which is the only thing that tells you how fast you are actually going once
+   the water bands get small. */
+function buildGorge() {
+  boat.props.length = 0;
+  for (let i = 0; i < BOAT.props; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    boat.props.push({
+      side,
+      z: (i / 2) * BOAT.propSpacing + (i % 2) * BOAT.propSpacing * 0.5,
+      out: 0.06 + (i * 0.37) % 0.5,     /* how far up the bank it sits */
+      tall: 0.5 + ((i * 0.61) % 1) * 1.4,
+      kind: i % 3,
+    });
+  }
+}
+
+/* Which temper the boss is in. */
+function boatPhase() {
+  let out = BOAT.phases[0];
+  for (const ph of BOAT.phases) if (boat.bossHits >= ph.at) out = ph;
+  return out;
+}
+
 /* --- running it ---------------------------------------------------------- */
 
 function startBoat() {
@@ -2047,8 +2105,14 @@ function startBoat() {
   boat.bossHits = 0;
   boat.bossPhase = 0;
   boat.mines.length = 0;
+  boat.shots.length = 0;
   boat.spray.length = 0;
   boat.nextMine = 0;
+  boat.nextShot = 0;
+  boat.phase = 0;
+  boat.phaseAt = -99;
+  boat.sinkAt = -99;
+  buildGorge();
   boat.timeLeft = BOAT.duration;
   boat.rams = 0;
   boat.points = 0;
@@ -2085,6 +2149,16 @@ function hurtBoat(reason) {
 }
 
 function updateBoat(dt) {
+  /* Once it is going down, everything stops except the wreck and the water.
+     Cutting straight to a tally screen made six rams feel like a spreadsheet
+     entry rather than a kill. */
+  if (boat.sinkAt > 0) {
+    boat.z += BOAT.cruise * 0.4 * dt;
+    updateBoatSpray(dt);
+    if (game.time - boat.sinkAt > 2.2) finishBoat();
+    return;
+  }
+
   boat.timeLeft -= dt;
 
   /* --- the throttle. Same deal as the rocket: it is a resource, and closing
@@ -2108,9 +2182,22 @@ function updateBoat(dt) {
     if (hurtBoat('INTO THE BANK')) spawnBoatSpray(boat.x, 0.4, 10);
   }
 
+  /* --- what temper it is in --- */
+  const ph = boatPhase();
+  const phIdx = BOAT.phases.indexOf(ph);
+  if (phIdx !== boat.phase) {
+    boat.phase = phIdx;
+    boat.phaseAt = game.time;
+    if (ph.label) {
+      boatOutcome(ph.label);
+      bonus.flash = 0.35;
+      Sound.play('bonus');
+    }
+  }
+
   /* --- the boss. It weaves across the river, and it runs harder the closer
          you get, so the throttle is the only way to actually catch it. --- */
-  boat.bossPhase += dt * BOAT.bossWeave;
+  boat.bossPhase += dt * BOAT.bossWeave * ph.weave;
   boat.bossX = Math.sin(boat.bossPhase) * BOAT.riverHalf * BOAT.bossRange;
 
   const gap = boat.bossZ;
@@ -2136,15 +2223,42 @@ function updateBoat(dt) {
       boat.won = true;
       boat.points += BOAT.points.win;
       addScore(BOAT.points.win, 'BOSS DOWN');
-      finishBoat();
-      return;
+      boat.sinkAt = game.time;
+      boat.mines.length = 0;
+      boat.shots.length = 0;
+      bonus.shake = 26;
+      bonus.flash = 0.85;
+      Sound.play('explode');
+      spawnBoatSpray(boat.bossX, 0.8, 40);
+      return;                     /* it goes down first, then the tally */
     }
   }
 
   /* --- mines, dropped behind the boss --- */
   if (game.time >= boat.nextMine) {
-    boat.nextMine = game.time + BOAT.mineEvery;
+    boat.nextMine = game.time + BOAT.mineEvery * ph.mine;
     boat.mines.push({ x: boat.bossX, z: boat.bossZ, hit: false });
+  }
+
+  /* --- and from the second temper on, it shoots back --- */
+  if (ph.shootEvery > 0 && game.time >= boat.nextShot) {
+    boat.nextShot = game.time + ph.shootEvery;
+    boat.shots.push({ x: boat.bossX, z: boat.bossZ, hit: false });
+    Sound.play('shot');
+  }
+
+  for (let i = boat.shots.length - 1; i >= 0; i--) {
+    const sh = boat.shots[i];
+    /* A shot comes at you under its own steam as well as the closing speed. */
+    sh.z -= (speed + BOAT.shotSpeed) * dt;
+
+    if (sh.z < -1.2) { boat.shots.splice(i, 1); continue; }
+    if (sh.hit) continue;
+
+    if (sh.z < 0.5 && sh.z > -0.4 && Math.abs(sh.x - boat.x) < BOAT.shotHalf * 2.6) {
+      sh.hit = true;
+      if (hurtBoat('HIT')) spawnBoatSpray(sh.x, 0.25, 12);
+    }
   }
 
   for (let i = boat.mines.length - 1; i >= 0; i--) {
@@ -2250,15 +2364,119 @@ function drawBoat() {
     ctx.stroke();
   }
 
-  /* Everything in the water, furthest first so near things cover far ones. */
+  /* Everything in the world, furthest first so near things cover far ones.
+     The banks go in the same list as the water, or a rock on the near bank
+     draws behind a mine that is well past it. */
   const things = [];
+
+  const span = BOAT.props * BOAT.propSpacing * 0.5;
+  for (const pr of boat.props) {
+    /* Wrap them round so the gorge never runs out. */
+    let z = pr.z - (boat.z % span);
+    if (z < -1) z += span;
+    things.push({ z, draw: () => drawGorgeProp(pr, z) });
+  }
+
   for (const m of boat.mines) if (!m.hit) things.push({ z: m.z, draw: () => drawMine(m) });
-  things.push({ z: boat.bossZ, draw: drawBossBoat });
+  for (const sh of boat.shots) if (!sh.hit) things.push({ z: sh.z, draw: () => drawBossShot(sh) });
+  if (boat.sinkAt < 0) things.push({ z: boat.bossZ, draw: drawBossBoat });
+  else things.push({ z: boat.bossZ, draw: drawSinkingBoss });
+
   things.sort((p, q) => q.z - p.z);
   for (const t of things) if (t.z > -1) t.draw();
 
   drawBoatSpray();
   drawOwnBoat();
+}
+
+/* A rock or a post on the bank. Purely scenery, and the only honest report of
+   how fast you are moving once the water bands get small. */
+function drawGorgeProp(pr, z) {
+  const p = boatProject(z);
+  if (p.scale <= 0.012) return;
+
+  const x = boatScreenX(pr.side * (BOAT.riverHalf + pr.out), p.scale);
+  const w = Math.max(1.5, p.scale * GRID * (pr.kind === 1 ? 0.5 : 0.9));
+  const h = Math.max(2, p.scale * GRID * pr.tall * (pr.kind === 1 ? 2.2 : 1.0));
+
+  if (pr.kind === 1) {
+    /* A mooring post, with a bit of a lean. */
+    ctx.fillStyle = '#3a2a1e';
+    ctx.fillRect(x - w / 2, p.y - h, w, h);
+    ctx.fillStyle = '#5a4230';
+    ctx.fillRect(x - w / 2, p.y - h, w * 0.45, h);
+  } else {
+    /* A rock. */
+    ctx.fillStyle = pr.kind === 0 ? '#4a3a30' : '#38302c';
+    ctx.beginPath();
+    ctx.moveTo(x - w / 2, p.y);
+    ctx.lineTo(x - w * 0.28, p.y - h);
+    ctx.lineTo(x + w * 0.22, p.y - h * 0.82);
+    ctx.lineTo(x + w / 2, p.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+/* Something the boss threw at you, coming down the river. */
+function drawBossShot(sh) {
+  const p = boatProject(sh.z);
+  if (p.scale <= 0.01) return;
+
+  const x = boatScreenX(sh.x, p.scale);
+  const r = Math.max(1.5, BOAT.shotHalf * p.scale * (WIDTH / 2) * BOAT.spread);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(x, p.y, 0, x, p.y, r * 2.4);
+  g.addColorStop(0, 'rgba(255,220,120,0.95)');
+  g.addColorStop(0.4, 'rgba(255,120,40,0.55)');
+  g.addColorStop(1, 'rgba(255,60,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, p.y, r * 2.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = '#fff6d0';
+  ctx.beginPath();
+  ctx.arc(x, p.y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/* The boss going down. Six rams deserves more than a cut to a tally. */
+function drawSinkingBoss() {
+  const t = Math.min(1, (game.time - boat.sinkAt) / 2.2);
+  const p = boatProject(boat.bossZ);
+  if (p.scale <= 0.01) return;
+
+  const w = Math.max(4, p.scale * GRID * 3.6);
+  const x = boatScreenX(boat.bossX, p.scale);
+
+  /* Rolling over as it settles. */
+  ctx.save();
+  ctx.translate(x, p.y + t * w * 0.4);
+  ctx.rotate(t * 0.9);
+  ctx.globalAlpha = 1 - t * 0.85;
+  drawArt(ctx, Art.of('boat'), -w / 2, -w * 0.34, w, w * 0.68,
+          { cells: 1, time: game.time, dir: 1 });
+  ctx.restore();
+
+  /* Fire on the water for the first half, then just steam. */
+  if (t < 0.65) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const r = w * (0.7 + t * 1.8);
+    const g = ctx.createRadialGradient(x, p.y, 0, x, p.y, r);
+    g.addColorStop(0, `rgba(255,240,180,${0.9 * (1 - t / 0.65)})`);
+    g.addColorStop(0.4, `rgba(255,140,40,${0.6 * (1 - t / 0.65)})`);
+    g.addColorStop(1, 'rgba(255,60,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 }
 
 function drawMine(m) {
@@ -2370,6 +2588,11 @@ function drawOwnBoat() {
   ctx.fillStyle = '#2a3550';
   ctx.fillRect(-w * 0.22, -h * 0.42, w * 0.44, h * 0.36);
 
+  /* Froggy is driving. He is the reason any of this is happening. */
+  const fs = GRID * 0.82;
+  drawArt(ctx, Art.of('frog'), -fs / 2, -h * 0.52 - fs * 0.42, fs, fs,
+          { cells: 1, time: game.time });
+
   /* A flash of red while you are still in the grace period after a hit. */
   if (game.time - boat.hurtAt < BOAT.grace && Math.floor(game.time * 12) % 2) {
     ctx.globalAlpha = 0.5;
@@ -2425,6 +2648,18 @@ function drawBoatHud() {
   ctx.fillRect(gx, gy, gw, gh);
   ctx.fillStyle = boat.burning ? '#ffd84a' : (frac < 0.25 ? '#ff6060' : '#4ad2ff');
   ctx.fillRect(gx, gy, gw * frac, gh);
+
+  /* Which temper it is in, up on the skyline, so the level tells you it is
+     escalating rather than leaving you to notice. */
+  const ph = boatPhase();
+  if (ph.label && boat.sinkAt < 0) {
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = 0.5 + 0.3 * Math.abs(Math.sin(game.time * 3));
+    ctx.fillStyle = '#ff7a4a';
+    ctx.font = font(GRID * 0.3);
+    ctx.fillText(ph.label, WIDTH / 2, boatHorizonY() - GRID * 0.45);
+    ctx.globalAlpha = 1;
+  }
 
   /* Whatever just happened, said once, in the middle of the river. */
   if (boat.outcome && game.time - boat.outcomeAt < 1.3) {
@@ -2922,7 +3157,11 @@ function hop(dx, dy) {
   if (dx) {
     frog.hopFromX = frog.x;
     frog.hopXT = 0;
-    frog.hopXDur = glide ? TWISTS.iceGlide * 1000 : CONFIG.hopDuration;
+    /* The steer has to fit inside a slide, or on the fast ice you would still
+       be leaning across when the next shove arrives. */
+    frog.hopXDur = glide
+      ? Math.min(TWISTS.iceGlide, iceStep() * 0.8) * 1000
+      : CONFIG.hopDuration;
     frog.glideX = glide;
 
     const col = Math.round(frog.x / GRID) + dx;
@@ -2936,7 +3175,7 @@ function hop(dx, dy) {
     /* A forced slide takes exactly as long as the gap to the next one, which
        is what turns a row of hops into one continuous glide. */
     frog.hopYDur = (glide && sliding)
-      ? TWISTS.iceStep * 1000
+      ? iceStep() * 1000
       : (glide ? TWISTS.iceGlide * 1000 : CONFIG.hopDuration);
     frog.glideY = glide;
 
@@ -2978,6 +3217,12 @@ function onSolidGround() {
    Reaching the median cancels it, which is what makes the median matter and
    splits the level into two committed runs, the road then the river.
    -------------------------------------------------------------------------- */
+/* How fast this level's ice is. Deep Freeze runs about twice the speed of
+   Slippery Bank, which is the difference between the two ice levels. */
+function iceStep() {
+  return levelRule('iceStep', TWISTS.iceStep);
+}
+
 function updateSlide(dt) {
   const frog = game.frog;
   if (!frog || game.state !== 'play') return;
@@ -2995,7 +3240,7 @@ function updateSlide(dt) {
   }
 
   if (game.time >= frog.iceNext) {
-    frog.iceNext = game.time + TWISTS.iceStep;
+    frog.iceNext = game.time + iceStep();
     sliding = true;
     hop(0, -1);                    /* carried forward whether you like it or not */
     sliding = false;
@@ -3007,7 +3252,7 @@ function slideProgress() {
   const frog = game.frog;
   if (!frog || !frog.iceNext) return 0;
   const left = frog.iceNext - game.time;
-  return Math.max(0, Math.min(1, 1 - left / TWISTS.iceStep));
+  return Math.max(0, Math.min(1, 1 - left / iceStep()));
 }
 
 const KEYS = {
@@ -3948,7 +4193,7 @@ function drawDarkness() {
   n.setTransform(1, 0, 0, 1, 0, 0);
   n.globalCompositeOperation = 'source-over';
   n.clearRect(0, 0, WIDTH, HEIGHT);
-  n.fillStyle = `rgba(0,0,6,${TWISTS.darkness})`;
+  n.fillStyle = `rgba(0,0,6,${levelRule('darkness', TWISTS.darkness)})`;
   n.fillRect(0, GRID, WIDTH, HEIGHT - GRID * 2);
 
   /* Now cut the light out of it. */
@@ -3972,16 +4217,35 @@ function drawDarkness() {
   const lamp = lanternAt();
   if (lamp) hole(lamp.x, lamp.y, GRID * TWISTS.lampRadius, 1);
 
-  /* Headlights, thrown the way each vehicle is going. */
-  for (const lane of lanes) {
-    if (lane.type !== 'road' || !lane.active) continue;
-    const y = laneY(lane.row) + GRID / 2;
-    for (const ob of lane.obstacles) {
-      if (ob.deadUntil > game.time) continue;
-      if (ob.x > WIDTH + GRID || ob.x + ob.cells * GRID < -GRID) continue;
-      const nose = ob.vx > 0 ? ob.x + ob.cells * GRID : ob.x;
-      hole(nose + Math.sign(ob.vx) * GRID * TWISTS.headlampReach * 0.45, y,
-           GRID * TWISTS.headlampReach * 0.75, 0.85);
+  /* Headlights, thrown AHEAD of each vehicle rather than around it.
+
+     The old version put a big round hole on top of the car, so every car on
+     the board lit itself and a 97% black level still showed you everything.
+     This is a cone in front of the nose, built out of a few overlapping holes
+     that get wider and weaker with distance, so what you see is a beam
+     sweeping the road, and the car itself stays in the dark until it is
+     nearly on top of you. */
+  if (levelRule('headlights', TWISTS.headlights)) {
+    for (const lane of lanes) {
+      if (lane.type !== 'road' || !lane.active) continue;
+      const y = laneY(lane.row) + GRID / 2;
+
+      for (const ob of lane.obstacles) {
+        if (ob.deadUntil > game.time) continue;
+        if (ob.x > WIDTH + GRID * 4 || ob.x + ob.cells * GRID < -GRID * 4) continue;
+
+        const dir = Math.sign(ob.vx) || 1;
+        const nose = dir > 0 ? ob.x + ob.cells * GRID : ob.x;
+
+        const steps = 5;
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          const along = GRID * TWISTS.headlampReach * t;
+          const wide = GRID * TWISTS.headlampWidth * (0.35 + t);
+          /* Falls off fast, so the far end of the beam is a suggestion. */
+          hole(nose + dir * along, y, wide, 0.5 * (1 - t * 0.75));
+        }
+      }
     }
   }
 
@@ -4931,11 +5195,11 @@ window.frogger = {
   MODES, BONUS, bonus, mode, setting, rule, cycleMode, isBonusLevel, Engine, ENGINE,
   LEVELS, ENVIRONMENTS, MUSIC, planFor, lapsFor, plan, levelKind, levelName,
   hazard, twist, applyPlan, enterLevel, buildObstacles, trafficRows,
-  onSolidGround, updateSlide, slideProgress,
+  onSolidGround, updateSlide, slideProgress, iceStep,
   rocket, heli, startRocket, startHeli, updateRocket, updateHeli, ROCKET, HELI,
   boat, BOAT, startBoat, updateBoat, boatProject, boatScreenX, hurtBoat,
-  boatHorizonY, boatBottomY, finishBoat,
-  scatterStars, crashRocket, updateAliens, takeHeliHit,
+  boatHorizonY, boatBottomY, finishBoat, boatPhase, buildGorge,
+  scatterStars, crashRocket, updateAliens, takeHeliHit, overMedian, medianLane,
   TWISTS, RIVER_PRESETS, LEVEL_LOOP, levelTag, clampPickedLevel, ghosts,
   ENGINE_PROFILES, SOUNDS, PALETTES, engineProfileFor,
   advanceLevel, startBonusRound, inBonus, held, smashableLanes,

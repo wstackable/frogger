@@ -1333,10 +1333,14 @@ check("landing on a free pad fills it and scores", (() => {
   api.rocket.x = CONFIG.homeCols[2] * GRID;
   api.rocket.flying = true;
   api.rocket.windPhase = 0;
-  for (let i = 0; i < 400 && api.rocket.y > api.laneY(0); i++) {
+  /* Hold the throttle. The median holds a coasting rocket now, which is the
+     point of it, so a hands-off climb never gets past halfway. */
+  api.held.up = true;
+  for (let i = 0; i < 900 && api.rocket.y > api.laneY(0); i++) {
     api.rocket.x = CONFIG.homeCols[2] * GRID;
     frames(1);
   }
+  api.held.up = false;
   return game.bays[2] === true && game.score > before;
 })(), `bays ${JSON.stringify(game.bays)}`);
 
@@ -2178,6 +2182,183 @@ check("one hit does not", (() => {
   frames(4);
   return game.state === "heli";
 })(), game.state);
+
+
+console.log("\n== the speedboat boss ==");
+
+const BOAT_LEVEL = api.LEVELS.findIndex(l => l.kind === "boat") + 1;
+
+check("there is a boss level in the plan", BOAT_LEVEL > 0);
+
+function onTheRiver() {
+  api.startGame(BOAT_LEVEL);
+  frames(Math.ceil(api.BOAT.introTime * 60) + 6);
+  return game.state === "boat";
+}
+
+check("it opens with a briefing then hands over", (() => {
+  api.startGame(BOAT_LEVEL);
+  frames(2);
+  if (game.state !== "boatIntro") return false;
+  frames(Math.ceil(api.BOAT.introTime * 60) + 6);
+  return game.state === "boat";
+})(), game.state);
+
+check("it is the last level, so it is the boss", BOAT_LEVEL === api.LEVELS.length);
+
+check("it does not fall through to a normal crossing", (() => {
+  if (!onTheRiver()) return false;
+  /* A crossing would have a frog on a board. This has a boat on a river. */
+  return api.boat.hull === api.BOAT.hull && game.state === "boat";
+})());
+
+check("the projection puts far things higher and smaller than near ones", (() => {
+  const near = api.boatProject(0);
+  const far = api.boatProject(api.BOAT.depth);
+  return far.y < near.y && far.scale < near.scale && far.scale > 0;
+})());
+
+check("the horizon is above the waterline", () => true);
+check("the river narrows towards the horizon", (() => {
+  const near = api.boatProject(0);
+  const far = api.boatProject(api.BOAT.depth);
+  const nearW = Math.abs(api.boatScreenX(api.BOAT.riverHalf, near.scale) -
+                         api.boatScreenX(-api.BOAT.riverHalf, near.scale));
+  const farW = Math.abs(api.boatScreenX(api.BOAT.riverHalf, far.scale) -
+                        api.boatScreenX(-api.BOAT.riverHalf, far.scale));
+  return farW < nearW * 0.4;
+})());
+
+check("the throttle closes the gap and coasting does not", (() => {
+  if (!onTheRiver()) return false;
+  api.boat.bossZ = api.BOAT.bossGap;
+  api.held.up = true;
+  frames(30);
+  const closed = api.BOAT.bossGap - api.boat.bossZ;
+  api.held.up = false;
+  api.boat.bossZ = api.BOAT.bossGap;
+  frames(30);
+  const drifted = api.BOAT.bossGap - api.boat.bossZ;
+  return closed > drifted;
+})());
+
+check("the throttle is a resource, and it comes back off it", (() => {
+  if (!onTheRiver()) return false;
+  api.held.up = true;
+  frames(40);
+  const burned = api.boat.fuel;
+  api.held.up = false;
+  frames(60);
+  return burned < api.BOAT.boostFuel && api.boat.fuel > burned;
+})());
+
+check("ramming the stern hurts it", (() => {
+  if (!onTheRiver()) return false;
+  const before = api.boat.bossHits;
+  api.boat.bossZ = 0.2;
+  api.boat.x = api.boat.bossX;
+  frames(2);
+  return api.boat.bossHits > before;
+})());
+
+check("and it backs off again rather than sitting there to be farmed", (() => {
+  return api.boat.bossZ > api.BOAT.ramRange;
+})(), String(api.boat.bossZ));
+
+check("a mine costs hull", (() => {
+  if (!onTheRiver()) return false;
+  const before = api.boat.hull;
+  api.boat.hurtAt = -99;
+  api.boat.mines.push({ x: api.boat.x, z: 0.1, hit: false });
+  frames(2);
+  return api.boat.hull === before - 1;
+})());
+
+check("but not twice in the same instant", (() => {
+  if (!onTheRiver()) return false;
+  api.boat.hurtAt = -99;
+  api.boat.mines.push({ x: api.boat.x, z: 0.1, hit: false });
+  frames(2);
+  const after = api.boat.hull;
+  api.boat.mines.push({ x: api.boat.x, z: 0.1, hit: false });
+  frames(2);
+  return api.boat.hull === after;
+})());
+
+check("running out of hull ends the run, and you lost", (() => {
+  if (!onTheRiver()) return false;
+  while (api.boat.hull > 0 && game.state === "boat") {
+    api.boat.hurtAt = -99;
+    api.hurtBoat("TEST");
+  }
+  return game.state === "boatResults" && api.boat.won === false;
+})(), game.state);
+
+check("six rams sinks it and you won", (() => {
+  if (!onTheRiver()) return false;
+  for (let i = 0; i < api.BOAT.bossHits; i++) {
+    api.boat.bossZ = 0.2;
+    api.boat.x = api.boat.bossX;
+    frames(2);
+  }
+  return api.boat.won === true && api.boat.bossHits >= api.BOAT.bossHits;
+})(), `hits ${api.boat.bossHits}`);
+
+check("it goes down on screen before the tally", (() => {
+  /* Straight to a results panel made six rams feel like a spreadsheet entry. */
+  return api.boat.sinkAt > 0 && game.state === "boat";
+})(), game.state);
+
+check("and the tally does arrive", (() => {
+  frames(60 * 3);
+  return game.state === "boatResults";
+})(), game.state);
+
+check("the boss has more than one temper", api.BOAT.phases.length >= 2);
+
+check("it gets angrier as you hurt it", (() => {
+  const ph = api.BOAT.phases;
+  for (let i = 1; i < ph.length; i++) {
+    if (ph[i].at <= ph[i - 1].at) return false;      /* thresholds climb */
+    if (ph[i].weave <= ph[i - 1].weave) return false; /* weaves harder */
+    if (ph[i].mine >= ph[i - 1].mine) return false;   /* mines more often */
+  }
+  return true;
+})());
+
+check("it starts shooting back at some point", (() => {
+  return api.BOAT.phases.some((p) => p.shootEvery > 0) &&
+         api.BOAT.phases[0].shootEvery === 0;
+})());
+
+check("a shot costs hull", (() => {
+  if (!onTheRiver()) return false;
+  const before = api.boat.hull;
+  api.boat.hurtAt = -99;
+  api.boat.shots.push({ x: api.boat.x, z: 0.1, hit: false });
+  frames(2);
+  return api.boat.hull === before - 1;
+})());
+
+check("the gorge has banks streaming past", (() => {
+  if (!onTheRiver()) return false;
+  return api.boat.props.length === api.BOAT.props &&
+         api.boat.props.some(p => p.side === -1) &&
+         api.boat.props.some(p => p.side === 1);
+})());
+
+check("running out of time means it got away", (() => {
+  if (!onTheRiver()) return false;
+  api.boat.timeLeft = 0.01;
+  frames(4);
+  return game.state === "boatResults" && api.boat.won === false;
+})(), game.state);
+
+check("it gets its own environment, not a reused one", (() => {
+  const env = api.LEVELS[BOAT_LEVEL - 1].env;
+  const others = api.LEVELS.filter((l, i) => i !== BOAT_LEVEL - 1).map(l => l.env);
+  return !!api.ENVIRONMENTS[env] && !others.includes(env);
+})(), api.LEVELS[BOAT_LEVEL - 1].env);
 
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

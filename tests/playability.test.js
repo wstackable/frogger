@@ -516,7 +516,9 @@ for (const level of CROSS_LEVELS) {
   if (rules.airless) {
     console.log(`      air: lowest tank ${REPORT.lowTank.toFixed(1)}s of ${api.AIR.tank}, pockets taken ${REPORT.grabbed}`);
   }
-  const twists = Object.keys(rules).filter((k) => rules[k]).join("+") || "-";
+  /* Only the switches, not the tuning values. `iceStep: 0.25` is a number, not
+     a twist, and printing it as one reads like a mechanic that does not exist. */
+  const twists = Object.keys(rules).filter((k) => rules[k] === true).join("+") || "-";
   console.log(`     ${String(level).padStart(2)} ${api.levelName(level).padEnd(17)}` +
               `[${twists.padEnd(5)}] homes=${r.homes} deaths=${r.deaths}`);
   check(`level ${level} (${api.levelName(level)}) is crossable`, r.homes >= 1,
