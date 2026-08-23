@@ -330,6 +330,15 @@ const ROCKET = {
   hitbox: 0.44,       /* how much of a square actually counts as a hit */
   starsPerFlight: 5,
   starPoints: 150,
+
+  /* The climb used to be one fixed speed, so the only answer to a car in the
+     way was to slide sideways. Holding UP now lights the booster, which hands
+     back the other axis: not just where you are, but when you get there.
+     Waiting under a row costs booster you might want higher up, and that
+     trade is the level. */
+  boost: 1.55,        /* climb multiplier with the booster lit */
+  coast: 0.42,        /* and with it off */
+  fuel: 2.3,          /* seconds of booster per rocket */
 };
 
 const HELI = {

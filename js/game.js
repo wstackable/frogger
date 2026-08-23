@@ -1657,6 +1657,8 @@ const rocket = {
   windPhase: 0,
   trail: [],
   stars: [],
+  fuel: 0,
+  burning: false,
   outcome: '',
   outcomeAt: -99,
 };
@@ -1678,6 +1680,8 @@ function resetRocket() {
   rocket.y = laneY(START_ROW);
   rocket.flying = false;
   rocket.wind = 0;
+  rocket.fuel = ROCKET.fuel;
+  rocket.burning = false;
   rocket.trail.length = 0;
   scatterStars();
 }
@@ -1739,8 +1743,16 @@ function updateRocket(dt) {
   if (held.left) steer -= 1;
   if (held.right) steer += 1;
 
+  /* The booster. Holding UP burns it and climbs hard, letting go drops you to
+     a crawl, and either way the traffic keeps moving, so hanging back to wait
+     for a gap is paid for in booster you will not have further up. */
+  rocket.burning = held.up && rocket.fuel > 0;
+  if (rocket.burning) rocket.fuel = Math.max(0, rocket.fuel - dt);
+
+  const climb = ROCKET.climb * (rocket.burning ? ROCKET.boost : ROCKET.coast);
+
   rocket.x += (steer * ROCKET.steer + rocket.wind) * dt;
-  rocket.y -= ROCKET.climb * dt;
+  rocket.y -= climb * dt;
   rocket.x = Math.max(-GRID * 0.4, Math.min(WIDTH - GRID * 0.6, rocket.x));
 
   rocket.trail.push({ x: rocket.x + GRID / 2, y: rocket.y + GRID, at: game.time });
@@ -1829,6 +1841,13 @@ function crashRocket() {
 }
 
 function finishRocket() {
+  /* Landing the last one returns straight from updateRocket without going
+     through resetRocket, which used to leave `flying` stuck true all the way
+     into the next level. Nothing read it there, so nothing broke, but the
+     rocket claiming to be airborne during a crossing is a lie waiting to be
+     believed by the next thing that asks. */
+  rocket.flying = false;
+  rocket.burning = false;
   Sound.play(rocket.landed ? 'fanfare' : 'over');
   setState('rocketResults');
 }
@@ -3417,6 +3436,21 @@ function drawRocketHud() {
   ctx.font = font(GRID * 0.38);
   ctx.fillText(String(rocket.landed), WIDTH - 10, y + GRID * 0.7);
 
+  /* The booster gauge. Sits above the bar so it is in the corner of your eye
+     while you are looking up the screen, not down here where you never are. */
+  const gw = GRID * 2.6;
+  const gh = GRID * 0.16;
+  const gx = WIDTH / 2 - gw / 2;
+  const gy = y - GRID * 0.34;
+  const frac = Math.max(0, Math.min(1, rocket.fuel / ROCKET.fuel));
+
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(gx - 2, gy - 2, gw + 4, gh + 4);
+  ctx.fillStyle = 'rgba(255,255,255,0.16)';
+  ctx.fillRect(gx, gy, gw, gh);
+  ctx.fillStyle = rocket.burning ? '#ffd84a' : (frac < 0.25 ? '#ff6060' : '#ff9a3c');
+  ctx.fillRect(gx, gy, gw * frac, gh);
+
   if (game.time - rocket.outcomeAt < 1.4) {
     ctx.globalAlpha = Math.max(0, 1 - (game.time - rocket.outcomeAt) / 1.4);
     ctx.textAlign = 'center';
@@ -3681,7 +3715,7 @@ function drawOverlay() {
   const cx = WIDTH / 2;
   const cy = HEIGHT / 2;
 
-  const panelH = showing === 'title' ? GRID * 11.2
+  const panelH = showing === 'title' ? TITLE_PANEL_H
                : showing === 'gameOver' ? GRID * 6
                : GRID * 3.6;
   const panelW = WIDTH - GRID * 0.6;
@@ -3715,30 +3749,33 @@ function drawOverlay() {
       ctx.fillText('FROGGER', cx, cy - GRID * 3.6);
 
       const bob = Math.sin(game.time * 2.2) * GRID * 0.06;
+      const L = titleLayout(cy);
+
       const s = GRID * 1.05;
-      drawArt(ctx, Art.of('frog'), cx - s / 2, cy - GRID * 3.05 + bob, s, s,
+      drawArt(ctx, Art.of('frog'), cx - s / 2, L.frog + bob, s, s,
               { cells: 1, time: game.time });
 
       /* --- the mode picker --- */
       const m = mode();
       mid(); ctx.fillStyle = Art.color('accent');
-      ctx.fillText(`\u25c0  ${m.label}  \u25b6`, cx, cy - GRID * 1.95);
+      ctx.fillText(`\u25c0  ${m.label}  \u25b6`, cx, L.mode);
       small(); ctx.fillStyle = Art.color('textDim');
-      ctx.fillText(m.blurb, cx, cy - GRID * 1.52);
+      ctx.fillText(m.blurb, cx, L.modeBlurb);
 
-      /* --- the level picker. It draws its own environment label. --- */
-      drawLevelList(cx, cy + GRID * 0.45);
+      /* --- the level picker, which draws its own environment label and the
+             blurb for whatever is highlighted --- */
+      drawLevelList(cx, L.listCy, L);
 
       small(); ctx.fillStyle = Art.color('textDim');
       ctx.fillText('up / down pick a level  ::  left / right pick a mode',
-                   cx, cy + GRID * 3.0);
+                   cx, L.controls);
       ctx.fillStyle = Art.color('accent');
-      ctx.fillText('R music  ::  M mute  ::  C colours  ::  P pause',
-                   cx, cy + GRID * 3.4);
+      ctx.fillText('R music  ::  M mute  ::  C colours  ::  P pause  ::  ESC menu',
+                   cx, L.keys);
 
       if (Math.floor(game.time * 1.6) % 2 === 0) {
         mid(); ctx.fillStyle = '#fff';
-        ctx.fillText('PRESS SPACE TO START', cx, cy + GRID * 4.1);
+        ctx.fillText('PRESS SPACE TO START', cx, L.start);
       }
       break;
     }
@@ -3808,14 +3845,53 @@ function clampPickedLevel() {
   game.pickedLevel = Math.max(1, Math.min(n, game.pickedLevel || 1));
 }
 
-function drawLevelList(cx, cy) {
+/* How tall the level list is. It grows and shrinks with the number of levels,
+   which is why nothing below it can be positioned by a hardcoded offset. */
+function levelListMetrics() {
+  const total = LEVELS.length;
+  const rows  = Math.min(5, total);
+  const rowH  = GRID * 0.62;
+  return { total, rows, rowH, edge: (rows / 2) * rowH };
+}
+
+const TITLE_PANEL_H = GRID * 11.2;
+
+/* Every y on the title screen, worked out in one place. The drawing code and
+   the test that checks these lines do not land on each other read the same
+   numbers, which is the only thing that makes that test worth having.
+
+   This exists because the level blurb and the controls line were being drawn
+   at exactly the same y, one on top of the other, and both were right on
+   their own terms: one measured down from the bottom of the list, the other
+   from the middle of the screen, and the list had grown into it. */
+function titleLayout(cy) {
+  const { edge } = levelListMetrics();
+  const listCy = cy + GRID * 0.45;
+  const env    = listCy + edge + GRID * 0.6;
+  const blurb  = planFor(game.pickedLevel).blurb
+    ? listCy + edge + GRID * 1.0
+    : null;
+  const end = blurb === null ? env : blurb;
+
+  return {
+    frog:      cy - GRID * 3.05,
+    mode:      cy - GRID * 1.95,
+    modeBlurb: cy - GRID * 1.52,
+    listCy, env, blurb,
+    controls:  end + GRID * 0.55,
+    keys:      end + GRID * 0.95,
+    start:     end + GRID * 1.65,
+    panelTop:    cy - TITLE_PANEL_H / 2,
+    panelBottom: cy + TITLE_PANEL_H / 2,
+  };
+}
+
+function drawLevelList(cx, cy, L) {
   clampPickedLevel();
   /* Whatever they are pointing at, get its music ready. */
   const wanted = Music.trackForLevel(planFor(game.pickedLevel));
   if (wanted) Music.prefetch(wanted);
-  const total = LEVELS.length;
-  const rows = Math.min(5, total);
-  const rowH = GRID * 0.62;
+  const { total, rows, rowH, edge } = levelListMetrics();
 
   /* Keep the choice roughly in the middle of the window. */
   let top = game.pickedLevel - 1 - Math.floor(rows / 2);
@@ -3855,7 +3931,6 @@ function drawLevelList(cx, cy) {
   ctx.textAlign = 'center';
   ctx.font = `${Math.round(GRID * 0.26)}px "Courier New", monospace`;
   ctx.fillStyle = Art.color('textDim');
-  const edge = (rows / 2) * rowH;
   if (top > 0) ctx.fillText('\u25b2', cx, cy - edge - GRID * 0.2);
   if (top + rows < total) ctx.fillText('\u25bc', cx, cy + edge + GRID * 0.2);
 
@@ -3864,12 +3939,13 @@ function drawLevelList(cx, cy) {
   const env = (ENVIRONMENTS[p.env] || {}).label || '';
   ctx.font = `bold ${Math.round(GRID * 0.24)}px "Courier New", monospace`;
   ctx.fillStyle = Art.color('accent');
-  ctx.fillText(env, cx, cy + edge + GRID * 0.6);
 
-  if (p.blurb) {
+  ctx.fillText(env, cx, L.env);
+
+  if (p.blurb && L.blurb !== null) {
     ctx.font = `${Math.round(GRID * 0.25)}px "Courier New", monospace`;
     ctx.fillStyle = Art.color('textDim');
-    ctx.fillText(p.blurb, cx, cy + edge + GRID * 1.0);
+    ctx.fillText(p.blurb, cx, L.blurb);
   }
 }
 
@@ -3920,7 +3996,11 @@ function loop(now) {
     if (!game.paused) {
       if (game.state === 'bonus') pedal = moving ? 1 : 0;
       else if (game.state === 'heli') pedal = moving ? 1 : 0.45;  /* rotor never rests */
-      else if (game.state === 'rocket') pedal = rocket.flying ? 1 : 0.12;
+      else if (game.state === 'rocket') {
+        /* Follows the booster now rather than being flat out the whole way,
+           so the engine says what the rocket is doing. */
+        pedal = !rocket.flying ? 0.12 : (rocket.burning ? 1 : 0.35);
+      }
       else if (game.state === 'heliIntro') pedal = 0.3;
     }
     Engine.setThrottle(pedal);
@@ -3961,6 +4041,7 @@ window.frogger = {
   updateDives, spawnPuff, spawnRing, updateFx,
   updateSnakes, SNAKE, snakeLane, levelRule,
   updateAir, airless, timeCapacity, AIR, spawnAirPocket, airRows,
+  titleLayout, levelListMetrics, TITLE_PANEL_H,
   updateGators, gatorPhase, gatorBites, GATOR, gatorHeadCell, cellUnder,
   WIDTH, HEIGHT, GRID, COLS, NLANES,
 };

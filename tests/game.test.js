@@ -1873,5 +1873,165 @@ if (AIR_LEVEL !== -1) {
 }
 
 
+console.log("\n== the title screen fits on the title screen ==");
+
+/* The blurb and the controls line were drawn at exactly the same y, one over
+   the other, and each was right on its own terms. These checks are about the
+   whole column agreeing with itself. */
+const TITLE_ORDER = ["frog", "mode", "modeBlurb", "env", "blurb", "controls",
+                     "keys", "start"];
+
+function titleRows(level) {
+  game.pickedLevel = level;
+  const L = api.titleLayout(api.HEIGHT / 2);
+  return { L, ys: TITLE_ORDER.map((k) => ({ k, y: L[k] })).filter((r) => r.y !== null) };
+}
+
+check("no two lines land on top of each other, on any level", (() => {
+  const gap = CONFIG.grid * 0.3;      /* a line needs at least this much room */
+  for (let n = 1; n <= api.LEVELS.length; n++) {
+    const { ys } = titleRows(n);
+    for (let i = 1; i < ys.length; i++) {
+      if (ys[i].y - ys[i - 1].y < gap) {
+        return `level ${n}: ${ys[i - 1].k} at ${ys[i - 1].y.toFixed(0)} and ` +
+               `${ys[i].k} at ${ys[i].y.toFixed(0)}`;
+      }
+    }
+  }
+  return true;
+})() === true, "lines overlap");
+
+check("every line stays inside the panel", (() => {
+  const pad = CONFIG.grid * 0.25;
+  for (let n = 1; n <= api.LEVELS.length; n++) {
+    const { L, ys } = titleRows(n);
+    for (const r of ys) {
+      if (r.y < L.panelTop + pad || r.y > L.panelBottom - pad) {
+        return `level ${n}: ${r.k} at ${r.y.toFixed(0)} outside ` +
+               `${L.panelTop.toFixed(0)}..${L.panelBottom.toFixed(0)}`;
+      }
+    }
+  }
+  return true;
+})() === true, "line outside the panel");
+
+check("a longer level list still leaves room underneath", (() => {
+  /* The list caps at five rows, so adding levels must not push the controls
+     line any further down. This is the thing that broke in the first place. */
+  const before = api.levelListMetrics().edge;
+  return before === (Math.min(5, api.LEVELS.length) / 2) * (CONFIG.grid * 0.62);
+})());
+
+check("the blurb is skipped cleanly when a level has none", (() => {
+  const L = api.titleLayout(api.HEIGHT / 2);
+  const saved = api.LEVELS[0].blurb;
+  api.LEVELS[0].blurb = "";
+  game.pickedLevel = 1;
+  const bare = api.titleLayout(api.HEIGHT / 2);
+  api.LEVELS[0].blurb = saved;
+  return bare.blurb === null && bare.controls > bare.env && L.controls > 0;
+})());
+
+game.pickedLevel = 1;
+
+
+console.log("\n== the rocket has a throttle ==");
+
+const ROCKET_LEVEL = api.LEVELS.findIndex(l => l.kind === "rocket") + 1;
+
+/* Get airborne with the sky empty, so the only thing being measured is climb. */
+function airborne() {
+  api.startGame(ROCKET_LEVEL);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  lanes.forEach(l => { l.active = false; });
+  api.held.up = true;
+  frames(3);
+  api.held.up = false;
+  return api.rocket.flying;
+}
+
+function climbOver(frameCount, burning) {
+  const from = api.rocket.y;
+  api.held.up = burning;
+  frames(frameCount);
+  api.held.up = false;
+  return from - api.rocket.y;
+}
+
+check("a full tank comes with every rocket", (() => {
+  api.startGame(ROCKET_LEVEL);
+  frames(Math.ceil(api.ROCKET.introTime * 60) + 6);
+  return api.rocket.fuel === api.ROCKET.fuel;
+})(), String(api.rocket.fuel));
+
+check("burning climbs faster than coasting", (() => {
+  if (!airborne()) return false;
+  const burned = climbOver(10, true);
+  if (!airborne()) return false;
+  const coasted = climbOver(10, false);
+  return burned > coasted * 1.5;
+})());
+
+check("burning uses the booster up", (() => {
+  if (!airborne()) return false;
+  const before = api.rocket.fuel;
+  climbOver(20, true);
+  return api.rocket.fuel < before;
+})());
+
+check("coasting does not", (() => {
+  if (!airborne()) return false;
+  const before = api.rocket.fuel;
+  climbOver(20, false);
+  return Math.abs(api.rocket.fuel - before) < 0.001;
+})());
+
+check("the booster runs out rather than going negative", (() => {
+  if (!airborne()) return false;
+  /* Hold it down near the pad, or it reaches the bank and gets a fresh tank
+     before the old one is empty. */
+  const low = api.rocket.y;
+  api.held.up = true;
+  for (let i = 0; i < Math.ceil(api.ROCKET.fuel * 60) + 120; i++) {
+    api.rocket.y = low;
+    frames(1);
+  }
+  api.held.up = false;
+  return api.rocket.fuel === 0;
+})(), String(api.rocket.fuel));
+
+check("an empty booster climbs like a coast, however hard you hold it", (() => {
+  if (!airborne()) return false;
+  api.rocket.fuel = 0;
+  const held = climbOver(10, true);
+  if (!airborne()) return false;
+  api.rocket.fuel = 0;
+  const idle = climbOver(10, false);
+  return Math.abs(held - idle) < 0.5 && api.rocket.burning === false;
+})());
+
+check("it still gets to the top on an empty tank", (() => {
+  /* Coasting has to be slow, not a dead end. If it were, running dry would be
+     an unwinnable rocket rather than a slow one. */
+  if (!airborne()) return false;
+  api.rocket.fuel = 0;
+  for (let i = 0; i < 60 * 40 && api.rocket.flying; i++) frames(1);
+  return !api.rocket.flying;
+})());
+
+check("the booster refills for the next rocket", (() => {
+  if (!airborne()) return false;
+  climbOver(30, true);
+  api.rocket.fuel = 0.4;
+  api.crashRocket();
+  frames(2);
+  return api.rocket.fuel === api.ROCKET.fuel;
+})(), String(api.rocket.fuel));
+
+check("coasting is slower than the old fixed climb, burning is faster", (() => {
+  return api.ROCKET.coast < 1 && api.ROCKET.boost > 1;
+})());
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);
