@@ -174,25 +174,46 @@ const Music = {
     return p;
   },
 
-  /* Called as soon as the page loads. Fetches whatever we are about to play,
-     then trickles the rest down behind it. */
+  /* Called as soon as the page loads.
+
+     This used to pull every track into memory, which is fifteen megabytes
+     before a frog has moved, on a page that is otherwise a few hundred
+     kilobytes. Most of it is music nobody will hear that run.
+
+     It now fetches what is about to play, and one more behind it, and leaves
+     the rest to be fetched when something actually asks for them. Anything
+     not in memory streams from the network instead, which is what the
+     <audio> element was going to do anyway. */
   warmUp() {
     if (this._warmed || !TRACKS.length) return;
     this._warmed = true;
 
     const first = this.track();
-    const rest = TRACKS.filter((t) => t !== first).map((t) => t.file);
 
     this.fetchTrack(first && first.file).then(() => {
       /* If the radio is already meant to be playing, swap the streaming
          source for the in-memory one now that we have it. */
       if (this.playing) { this.stop(); this.start(); }
-      /* One at a time, so the opening track never has to share. */
-      return rest.reduce(
-        (chain, file) => chain.then(() => this.fetchTrack(file)),
-        Promise.resolve()
-      );
+      this.lookAhead();
     });
+  },
+
+  /* Pull down the next track in the running order, and nothing more. Called
+     after the current one is safely in hand, and again whenever the track
+     changes, so there is always exactly one ready to go. */
+  lookAhead() {
+    const order = this.rotation();
+    if (order.length < 2) return;
+    const at = order.indexOf(this.index);
+    const next = order[(at + 1) % order.length];
+    const t = TRACKS[next];
+    if (t) this.fetchTrack(t.file);
+  },
+
+  /* How much of the library is sitting in memory. Only used by the tests, to
+     hold the line on the thing this was written to fix. */
+  cachedCount() {
+    return Object.keys(this._blobs).length;
   },
 
   /* Where to actually play a track from: memory if we have it, the network
@@ -262,6 +283,7 @@ const Music = {
 
     localStorage.setItem('frogger.track', String(this.index));
     if (this.enabled && CONFIG.music) { this.stop(); this.start(); }
+    this.lookAhead();
     return this.trackName();
   },
 

@@ -105,87 +105,102 @@ riding, diving turtle groups, five lilypads, lives, 30s timer, arcade scoring,
 bonus fly, lady frog, river crocodiles, lilypad crocodile, median snakes. One
 frog clears a level (`baysToClear`, set it to 5 for the arcade rule).
 
-**17 levels** with names and one-line descriptions, a level selector on the
-title screen (everything unlocked, up/down to pick), and difficulty that starts
+**17 levels** with names and one-line descriptions, and difficulty that starts
 genuinely easy and ramps.
 
+**A main menu.** START GAME, DIFFICULTY, LEVEL SELECT. The level list lives
+behind the third one. `titleMove` and `titleChoose` are the only two entry
+points, shared by keyboard and touch.
+
 **Special levels.** Monster truck rampage (free driving, smash everything,
-combo multiplier). Helicopter (free flight, gun fires the way you fly, alien
-attackers that chase and shoot back, armour rather than lives). Rocket (slide
-along the bottom, launch, dodge the traffic on the way up, collect stars, land
-on a free lilypad).
+combo multiplier, and it becomes a speedboat with a prop and a bow wave the
+moment it hits the river). Helicopter (free flight, gun fires the way you fly,
+aliens that chase and shoot back, two hits ends it). Rocket (line up, launch,
+climb on a booster you can run out of, hover on the median, dodge the traffic,
+collect stars, land on a free lilypad). Speedboat boss run, which is its own
+thing and has its own section below.
 
-**Twists on a normal crossing.** Ice (leaving solid ground commits you, the
-slide carries you forward, you only steer, the median is the one place you can
-stop). Dark (a circle of light around the frog plus sweeping headlights, drawn
-on a separate canvas so light is cut out of the darkness). Ghost (the world
-only moves when you do, and the ghosts close in while it is frozen).
+**Twists on a normal crossing.** Ice (leaving solid ground commits you and the
+frog glides rather than hops; `iceStep` per level, and Deep Freeze runs at
+about half the usual). Dark (a lantern on a wire and headlights thrown ahead of
+each car; Blackout takes the headlights away). Ghost (the world only moves when
+you do, and the ghosts move with it). Airless (Orbital Traffic, where the clock
+is a small tank and pockets of air drift past to refill it).
 
-**Presentation.** Escape pause menu, victory screen with a credits roll,
-per-level banners, screen shake, debris, floating scores, synthesised engine
-with a profile per machine, layered impact sounds, eight environments, six
-manual colour palettes on `C`.
+**Presentation.** Escape pause menu, victory screen with a credits roll, a
+between-levels card that names and describes what is coming, per-level banners,
+screen shake, debris, floating scores, a small effects layer for the crossing
+levels, synthesised engine with a profile per machine, layered impact sounds,
+nine environments, six manual colour palettes on `C`.
 
-## 6. What is left, in priority order
+## 5b. The speedboat boss run
 
-### 6a. The per-level research and polish pass (Will's main ask)
+The only level not drawn on the top-down grid, and the only one with its own
+renderer, so it gets its own section.
 
-His words: *"go through each level and think about what would make that level
-fun and engaging. Do research on arcade gameplay mechanics that are applicable
-for each type of level. Example ghost levels. Then work to make the details
-come together. Sound effects, little animations, simple but engaging gameplay
-mechanics, etc."*
+It is built the way pseudo-3D racers have been built since Pole Position. The
+river is a list of segments in `boat.segs`, each carrying a `curve` and a
+`hill`. `walkCourse()` walks them from the bow to the horizon once a frame,
+accumulating both, and stashes each segment's scale, screen position and
+lateral drift on the segment itself. Everything else, the water ribbon, the
+banks, a log, the boss, is "which segment, how far across", looked up through
+`thingView()`.
 
-This has **not** been done. It is the biggest remaining item and he has asked
-for it twice. Suggested approach:
+Things worth knowing before you change it:
 
-1. Research the arcade lineage for each level type before touching code. Ghost
-   houses (Super Mario World), vertical shooters, ice physics (Ice Climber,
-   Pengo), rampage games (Rampage, Carmageddon), light/dark levels.
-2. Go level by level. For each: what is the one idea that makes it worth
-   playing, what small animation sells it, what sound sells it.
-3. Push each level's pass separately so he can play them one at a time.
+- **The bends are the game.** `centrifugal` is set to roughly six tenths of
+  what `steer` can hold at full curve and flat out. Push it higher and the
+  river pins you to the bank with nothing you can do about it.
+- **The boss's speed is solved, not guessed.** It runs at `bossPace` times your
+  speed plus up to `bossRun` when you are on it, so the closing speed at point
+  blank is `top * (1 - bossPace) - bossRun`. If that is not positive the chase
+  cannot be won at all, which is exactly how the first version shipped. There
+  is a test on it.
+- **It also cannot be left behind.** `bossMin` keeps it in front of you.
+- **Its dropped logs are culled.** They used to accumulate until every lateral
+  was covered and no line existed.
+- **The furniture is laid as one ordered run** with `hazardGap` between items,
+  not as several independent sequences. Independent sequences can coincide and
+  wall the river off.
+- **Nothing but the clock ends the run.** Hitting something spins you out and
+  costs you your speed, which costs time. Checkpoint gates put time back.
 
-Known weak spots to look at first:
-- **The rocket** was called "very boring" before the dodging and stars were
-  added. Worth checking whether it is enough now.
-- **Turtle Trouble, Snake Pit, Croc Alley, Orbital Traffic** are plain
-  crossings that differ only in numbers. They need an idea each.
-- Sound is thin outside the special levels. The normal crossing has hop, die,
-  home, level and not much else.
+## 6. What is left
 
-### 6b. The first person speedboat boss level
+Everything the previous handoff listed under "what is left" has been done: the
+per-level pass, the speedboat boss, the music preload, the browser test's
+engine assertion and the orphan gravestone.
 
-`kind: 'boat'` exists in `LEVELS` (level 17, "Speedboat Boss Run") and is
-**not implemented**. Entering it currently falls through to a normal crossing.
+What is worth doing next, in no particular order:
 
-This is the one item that shares nothing with the existing code. Everything
-else sits on top of the top-down grid; this needs a second renderer drawing a
-river receding to a horizon with obstacles scaling up as they approach.
+### 6a. Play it with the kids and write down what they say
 
-- Music is already reserved for it: `Speedboat Boss Run` in `music/`, wired
-  through `MUSIC.forKind.boat`.
-- Will asked for engine sound. `Engine` in `js/audio.js` takes a profile;
-  add a `boat` one next to `truck`, `helicopter` and `rocket`. A boat wants a
-  burbling low chug plus water noise.
-- A cheaper middle option he was offered but never chose: the river scrolls
-  toward you and obstacles scale up, without a true perspective grid. Roughly a
-  third of the work and still reads as first person.
+That is the only remaining source of truth. Most of what improved this build
+came from Will playing it for twenty minutes and sending short, blunt messages
+about what felt wrong. Nothing in here beats that.
 
-### 6c. Smaller outstanding items
+Known soft spots that have not had a real player on them yet:
 
-- **Music bandwidth.** `Music.warmUp()` in `js/music.js` fetches every track
-  into memory on load, which is about 15MB. Fetch the opening track plus maybe
-  one lookahead and leave the rest on demand.
-- **Browser test suite.** `tests/browser.test.js` is at an older revision
-  because a restructuring of it was reverted rather than debugged. It passes,
-  but the engine loudness assertion in it is timing sensitive: it calls
-  `Engine.setThrottle` directly while the game loop overwrites the throttle
-  every frame. The fix is to drive it through the real controls (set
-  `game.state` and `held`) instead.
-- **`gravestone` sprite** exists and is drawn nowhere. Either use it as boneyard
-  scenery or delete it. A test fails if any sprite is unused, so it is
-  currently referenced in the themes only to keep that test happy.
+- The boss run's difficulty was tuned against a bot, not a person. `bossHits`,
+  `hazardGap` and the `phases` table are the knobs.
+- Orbital Traffic's `AIR.tank` is a guess at "a clean run makes it, a hesitant
+  one does not". The bot crosses in two seconds and never needed a pocket, so
+  it could not judge it.
+- Deep Freeze at `iceStep: 0.25` may be too much.
+
+### 6b. The music licensing question
+
+Three tracks in `music/` are named like YouTube "no copyright" downloads, which
+usually means credit required rather than public domain, and this repo is
+public. Still unresolved. Ask Will.
+
+### 6c. Smaller things
+
+- `tests/browser.test.js` is the slow suite and only runs by hand. Worth
+  wiring into whatever CI ever exists.
+- The crossing levels' effects layer (`game.fx`) is two shapes, a puff and a
+  ring. Anything wanting a third shape adds it there rather than inventing a
+  new system.
 
 ## 7. Running the tests
 
@@ -240,6 +255,40 @@ Each of these cost real time to find.
   first.** It plans one hop at a time. It called Deep Freeze unwinnable twice;
   both times the level was fine and the bot did not understand the mechanic.
   Teach it the mechanic, then believe it.
+- **`x || 1` is a bug wherever 0 is a legal value.** A coiling snake sets its
+  speed scale to 0, `ob.speedScale || 1` read that as full speed, and the snake
+  slid along while claiming to be frozen. Same family as `Number(null)` being 0.
+- **Set a state and the thing that state implies in the same place.** The snake
+  set its mood in one branch and its speed in the next case down, so there was
+  always one frame where it was coiled and still moving. One frame is visible.
+- **A mid-air state has to be left cleanly.** Landing the last rocket returned
+  from `updateRocket` without going through `resetRocket`, so `flying` stayed
+  true into the next level. Nothing read it, so nothing broke, until something
+  did.
+- **Anything a level spawns has to be culled.** The boss dropped a log every
+  couple of seconds and nothing removed them. After a minute the river was
+  impassable and it looked like a difficulty problem.
+- **Two positioning schemes on one screen will eventually meet.** The level
+  blurb measured down from the bottom of the level list and the controls line
+  measured down from the middle of the screen, and as the list grew they landed
+  on the same pixel. Every screen's layout is one function now, and there are
+  tests that no two lines collide.
+- **A light source centred on a thing lights the thing.** The dark levels
+  looked 97% black in the config and fully readable on screen, because every
+  car's headlight was a round hole centred on the car. Throw the beam ahead.
+- **Solve the chase, do not tune it.** If the pursued runs at `pace` times your
+  speed plus `run` when close, you can only ever catch it if
+  `top * (1 - pace) - run > 0`. Ours was negative and the boss was
+  mathematically uncatchable. There is a test on that expression now.
+- **Do not tune against a bot that ignores the mechanic.** The air level's tank
+  size could not be judged by a bot that crosses in two seconds and never needs
+  a pocket, and the boss run could not be judged by the hopping bot at all. Give
+  the mechanic to the bot first, or admit the number is a guess and say so.
+- **When the bot loses, suspect the bot, then suspect the level, in that
+  order, but actually check.** The boss run bot was failing for three genuinely
+  different reasons in a row: its own planner applied a bend correction after
+  its collision check, then the boss was uncatchable, then the dropped logs
+  were piling up. Only one of the three was the bot.
 - **The board is laid out per level**, not at load. `applyPlan()` rebuilds every
   lane's obstacles. Anything caching obstacle positions across levels is wrong.
 

@@ -2710,5 +2710,56 @@ check("game over still restarts from the top", (() => {
 })(), `level ${game.level}`);
 
 
+console.log("\n== the radio does not eat the network ==");
+
+check("loading the page does not pull the whole library into memory", (() => {
+  /* It used to fetch all of it: fifteen megabytes before a frog has moved, on
+     a page that is otherwise a few hundred kilobytes, most of it music nobody
+     will hear that run. */
+  if (typeof api.Music.cachedCount !== "function") return false;
+  api.Music._blobs = {};
+  api.Music._warmed = false;
+  api.Music.warmUp();
+  return api.Music.cachedCount() <= 2;
+})(), `${api.Music.cachedCount ? api.Music.cachedCount() : "?"} of ${api.TRACKS.length} cached`);
+
+check("but it does keep one ready behind the one that is playing", (() => {
+  return typeof api.Music.lookAhead === "function";
+})());
+
+check("anything not in memory still has somewhere to play from", (() => {
+  /* The fallback is the file itself, so a track that has not been fetched
+     streams rather than going silent. */
+  const t = api.TRACKS[api.TRACKS.length - 1];
+  api.Music._blobs = {};
+  return api.Music.sourceFor(t) === t.file;
+})());
+
+
+console.log("\n== the gravestone has a job now ==");
+
+check("some environment actually wants headstones", (() => {
+  return Object.values(api.ENVIRONMENTS).some((e) => e.graves === true);
+})());
+
+check("and it is the boneyard, which is the one with the ghosts in it", (() => {
+  const ghostLevel = api.LEVELS.find((l) => l.rules && l.rules.ghost);
+  return !!ghostLevel && api.ENVIRONMENTS[ghostLevel.env].graves === true;
+})());
+
+check("drawing them does not throw", (() => {
+  const ghostLevel = api.LEVELS.findIndex((l) => l.rules && l.rules.ghost) + 1;
+  api.startGame(ghostLevel);
+  frames(1);
+  try { api.drawGraves(); return true; } catch (e) { return e.message; }
+})() === true, "drawGraves threw");
+
+check("and nowhere else grows headstones by accident", (() => {
+  const withGraves = Object.entries(api.ENVIRONMENTS)
+    .filter(([, e]) => e.graves).map(([k]) => k);
+  return withGraves.length === 1;
+})(), Object.entries(api.ENVIRONMENTS).filter(([, e]) => e.graves).map(([k]) => k).join(","));
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) Deno.exit(1);

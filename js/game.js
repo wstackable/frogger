@@ -4021,6 +4021,37 @@ function drawBackground() {
     ctx.fillStyle = color;
     ctx.fillRect(0, laneY(lane.row), WIDTH, GRID);
   }
+
+  drawGraves();
+}
+
+/* Gravestones along the start line and the median, in the boneyard.
+
+   The sprite existed and was drawn nowhere. It was only listed in the themes
+   at all to stop the test that fails on unused art, which is the sort of thing
+   that quietly turns a guard into a lie. It is scenery now, and it is where
+   the ghosts come from, which the level was short of. */
+function drawGraves() {
+  if (!Art.environment().graves) return;
+
+  const art = Art.of('gravestone');
+  const size = GRID * 0.62;
+
+  for (const lane of lanes) {
+    if (lane.type !== 'start' && lane.type !== 'safe') continue;
+    const y = laneY(lane.row) + GRID - size * 0.92;
+
+    /* Fixed positions off the lane's own row, so they never wander and never
+       sit under the frog's starting square. */
+    for (let c = 1; c < COLS; c += 3) {
+      const col = (c + lane.row) % COLS;
+      if (col === START_COL) continue;
+      ctx.globalAlpha = 0.55;
+      drawArt(ctx, art, col * GRID + (GRID - size) / 2, y, size, size,
+              { cells: 1, time: game.time });
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawObstacles() {
@@ -5739,7 +5770,7 @@ window.frogger = {
   updateSnakes, SNAKE, snakeLane, levelRule,
   truckLane, truckAfloat, setEngineProfile,
   updateAir, airless, timeCapacity, AIR, spawnAirPocket, airRows,
-  lanternAt, resetGhosts, updateGhosts,
+  lanternAt, resetGhosts, updateGhosts, drawGraves,
   titleLayout, levelListMetrics, TITLE_PANEL_H,
   MAIN_MENU, mainMenuMove, mainMenuChoose, mainMenuSide, backToMainMenu,
   titleMove, titleChoose,

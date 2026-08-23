@@ -808,6 +808,7 @@ const ENVIRONMENTS = {
           median: '#3a3040', bankLine: '#7a8878', bayInner: '#05060a',
           text: '#e8f0e0', textDim: '#9fb09f', accent: '#c8f078',
           timeBar: '#8fc060', timeLow: '#c03040' },
+    graves: true,   /* headstones along the start line and the median */
     pixels: { G: '#c8f0a0', g: '#7a9860', d: '#3a4830',
               B: '#5a5048', b: '#302a26', n: '#7a6f64',
               R: '#a0a8a0', r: '#5a605a',
