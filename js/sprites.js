@@ -737,23 +737,30 @@ const SPRITES = {
   ],
 
   /* gravestone */
+  /* A headstone. The first version tried to spell RIP in two-pixel letters,
+     which at thirty pixels on screen is grey mush. A cross reads instantly at
+     any size, and a hard outline plus a flared plinth is what makes it a
+     carved object rather than a light grey blob.
+
+     Uses only w, s and K, which no environment recolours, so it stays stone
+     coloured wherever it is drawn. */
   gravestone: [
     '................',
-    '.....wwwwww.....',
-    '....wwwwwwww....',
-    '...wwwwwwwwww...',
-    '...wwsssswwsww..',
-    '...wwswwsswsww..',
-    '...wwsswwsssww..',
-    '...wwwwwwwwwww..',
-    '...wwsssssswww..',
-    '...wwwwwwwwwww..',
-    '...wwwwwwwwwww..',
-    '...wwwwwwwwwww..',
-    '..wwwwwwwwwwwww.',
-    '.wwwwwwwwwwwwww.',
-    'wwwwwwwwwwwwwwww',
-    '................',
+    '......KKKK......',
+    '....KKwwwwKK....',
+    '...KwwwwwwwwK...',
+    '..KwwwwwwwwwwK..',
+    '..KwwwwsswwwwK..',
+    '..KwwwwsswwwwK..',
+    '..KwwsssssswwK..',
+    '..KwwsssssswwK..',
+    '..KwwwwsswwwwK..',
+    '..KwwwwsswwwwK..',
+    '..KwwwwsswwwwK..',
+    '..KwwwwwwwwwwK..',
+    '..KwwwwwwwwwwK..',
+    '.KwwwwwwwwwwwwK.',
+    '.KKKKKKKKKKKKKK.',
   ],
   /* A star to grab on the way up during the rocket level. */
   star: [

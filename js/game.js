@@ -4035,18 +4035,31 @@ function drawGraves() {
   if (!Art.environment().graves) return;
 
   const art = Art.of('gravestone');
-  const size = GRID * 0.62;
 
   for (const lane of lanes) {
     if (lane.type !== 'start' && lane.type !== 'safe') continue;
-    const y = laneY(lane.row) + GRID - size * 0.92;
 
     /* Fixed positions off the lane's own row, so they never wander and never
        sit under the frog's starting square. */
     for (let c = 1; c < COLS; c += 3) {
       const col = (c + lane.row) % COLS;
       if (col === START_COL) continue;
-      ctx.globalAlpha = 0.55;
+
+      /* A graveyard of identical stones looks like wallpaper. Vary the height
+         off the column, deterministically, so it is the same every time. */
+      const size = GRID * (0.62 + ((col * 7 + lane.row * 3) % 4) * 0.055);
+      const y = laneY(lane.row) + GRID - size * 0.94;
+
+      /* Ground shadow, so they are standing in the earth rather than pasted
+         on top of it. */
+      ctx.globalAlpha = 0.30;
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.ellipse(col * GRID + GRID / 2, laneY(lane.row) + GRID * 0.93,
+                  size * 0.42, size * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = 0.82;
       drawArt(ctx, art, col * GRID + (GRID - size) / 2, y, size, size,
               { cells: 1, time: game.time });
     }
